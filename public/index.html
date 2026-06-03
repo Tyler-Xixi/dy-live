@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DY 沙箱自动化控制台</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Competition Sandbox</p>
+            <h1>DY 自动化控制台</h1>
+          </div>
+          <div class="status" id="statusPill">
+            <span class="status-dot"></span>
+            <span id="statusText">未运行</span>
+          </div>
+        </header>
+
+        <form id="taskForm" class="panel">
+          <div class="toolbar">
+            <div class="segmented" role="tablist" aria-label="运行模式">
+              <label>
+                <input type="radio" name="mode" value="flash" checked />
+                <span>抢商品</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="batch" />
+                <span>批量购买</span>
+              </label>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" name="dryRun" checked />
+              <span>Dry run</span>
+            </label>
+          </div>
+
+          <div class="grid">
+            <label class="field span-2 flash-only">
+              <span>直播间链接</span>
+              <input
+                name="liveUrl"
+                type="url"
+                value="https://live.douyin.com/952520575686?anchor_id="
+                placeholder="https://live.douyin.com/..."
+              />
+            </label>
+
+            <label class="field span-2 batch-only hidden">
+              <span>现有商品链接</span>
+              <input name="productUrl" type="url" placeholder="https://..." />
+            </label>
+
+            <label class="field">
+              <span>商品关键词</span>
+              <input
+                name="productName"
+                type="text"
+                value="Geil/金邦巨蟹升级款ddr5内存条6000频率台式机内存条"
+                placeholder="关键词、商品名或 SKU 片段"
+              />
+            </label>
+
+            <label class="field">
+              <span>商品编号</span>
+              <input name="productId" type="text" placeholder="可选" />
+            </label>
+
+            <label class="field">
+              <span>目标价格</span>
+              <input name="targetPrice" type="number" min="0" step="0.01" value="799" />
+            </label>
+
+            <label class="field">
+              <span>轮询间隔 ms</span>
+              <input name="pollMs" type="number" min="20" step="10" value="80" />
+            </label>
+
+            <label class="field">
+              <span>随机抖动 ms</span>
+              <input name="jitterMs" type="number" min="0" step="5" value="10" />
+            </label>
+
+            <label class="field">
+              <span>预热提前 ms</span>
+              <input name="prewarmMs" type="number" min="0" step="10" value="300" />
+            </label>
+
+            <label class="field flash-only">
+              <span>商品面板重试 ms</span>
+              <input name="openPanelIntervalMs" type="number" min="50" step="50" value="500" />
+            </label>
+
+            <label class="field batch-only hidden">
+              <span>购买数量</span>
+              <input name="buyQuantity" type="number" min="1" step="1" value="1" />
+            </label>
+
+            <label class="field batch-only hidden">
+              <span>购买次数</span>
+              <input name="buyTimes" type="number" min="1" step="1" value="1" />
+            </label>
+          </div>
+
+          <div class="schedule flash-only">
+            <div class="section-title">
+              <h2>定时监控</h2>
+              <span>最多四个时间点</span>
+            </div>
+            <div class="time-grid">
+              <label class="field">
+                <span>时间段 1</span>
+                <input name="scheduleWindow1" type="time" step="1" value="10:29:00" />
+              </label>
+              <label class="field">
+                <span>时间段 2</span>
+                <input name="scheduleWindow2" type="time" step="1" value="12:29:00" />
+              </label>
+              <label class="field">
+                <span>时间段 3</span>
+                <input name="scheduleWindow3" type="time" step="1" value="14:29:00" />
+              </label>
+              <label class="field">
+                <span>时间段 4</span>
+                <input name="scheduleWindow4" type="time" step="1" value="16:29:00" />
+              </label>
+            </div>
+          </div>
+
+          <div class="advanced">
+            <details>
+              <summary>高级配置</summary>
+              <div class="grid advanced-grid">
+                <label class="field">
+                  <span>最大重试次数</span>
+                  <input name="maxRetries" type="number" min="1" step="1" value="7" />
+                </label>
+                <label class="field">
+                  <span>重试基础延迟 ms</span>
+                  <input name="retryBaseMs" type="number" min="20" step="20" value="200" />
+                </label>
+                <label class="field">
+                  <span>429 熔断次数</span>
+                  <input name="circuitBreaker429" type="number" min="1" step="1" value="3" />
+                </label>
+                <label class="field">
+                  <span>监控窗口 ms</span>
+                  <input name="monitorDurationMs" type="number" min="1000" step="1000" value="75000" />
+                </label>
+                <label class="field">
+                  <span>下单推进步数</span>
+                  <input name="maxOrderSteps" type="number" min="0" step="1" value="8" />
+                </label>
+                <label class="field">
+                  <span>购买后推进延迟 ms</span>
+                  <input name="postBuyDelayMs" type="number" min="0" step="10" value="120" />
+                </label>
+                <label class="field">
+                  <span>订单步骤延迟 ms</span>
+                  <input name="orderStepDelayMs" type="number" min="0" step="10" value="120" />
+                </label>
+                <label class="field">
+                  <span>点击超时 ms</span>
+                  <input name="clickTimeoutMs" type="number" min="100" step="50" value="700" />
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" name="strictPriceMatch" />
+                  <span>严格匹配价格</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" name="submitPaymentAndAbandon" checked />
+                  <span>提交后放弃支付</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" name="allowReservationClick" />
+                  <span>允许点预约</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" name="headless" />
+                  <span>无头浏览器</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" name="saveDiagnostics" checked />
+                  <span>保存诊断快照</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" name="closeBrowserOnFinish" checked />
+                  <span>结束后关闭浏览器</span>
+                </label>
+              </div>
+            </details>
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="startBtn" type="submit">开始</button>
+            <button class="danger" id="stopBtn" type="button" disabled>停止</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="log-panel">
+        <div class="log-header">
+          <div>
+            <p class="eyebrow">Runtime</p>
+            <h2>后台响应信息</h2>
+          </div>
+          <button type="button" id="clearLogsBtn">清空</button>
+        </div>
+        <div class="logs" id="logs" aria-live="polite"></div>
+      </aside>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

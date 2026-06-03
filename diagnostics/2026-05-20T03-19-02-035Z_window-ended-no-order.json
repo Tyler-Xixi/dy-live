@@ -1,0 +1,28 @@
+{
+  "reason": "window-ended-no-order",
+  "url": "https://live.douyin.com/952520575686?from_search=true",
+  "state": {
+    "stopReason": "",
+    "tooManyRequests": 0,
+    "lastPanelOpenAt": 1779247133087,
+    "scans": 172,
+    "candidateNodes": 50,
+    "matchedProducts": 25,
+    "unavailableMatches": 0,
+    "clickAttempts": 2,
+    "successfulClicks": 2,
+    "paymentClicks": 0,
+    "abandonClicks": 0,
+    "orderSubmitted": false,
+    "lastMatchText": "金邦存储旗舰店 1548本场点赞 + 加粉丝团 小时榜 100+ 人气榜 100+ 小时榜 100+ 标清 5/21 10:00 已预约 1钻 小心心 1钻 1钻 人气票 1钻 99钻 告白气球 99钻 99钻 Thuglife 99钻 1钻 520快乐 1钻 10钻 甜心糖果 10钻 1200钻 跑车 1200钻 2钻 大啤酒 2钻 9钻 520助力票 9钻 1钻 玫瑰 1钻 1钻 抖音 1钻 199钻 为你爆灯 199钻 520钻 热气球 520钻 更多 充值 1/6 大促价 ￥ 49.9 【618直播特惠】 金邦GH330 32G高速USB3.2小巧便携金属机身车载U盘 保障 运费险·7天无理由退货·极速退款 选择 32GB 共1种闪存容量可选 物流 现在付款，从广东省深圳市发货，预计5月23日送达，包邮 保障说明 运费险 用户在商家发货90天内提出退/换货，通过线上寄件方式邮寄可享1公斤内免运费，平台会自动抵扣，用户无需垫付。若用户自行寄回，享受线上寄件的免运费金额，用户需上传真实的运单号，在成功退/换货后，平台会将钱款打款至用户的支付账户，具体以\"订单详情-运费险\"展示信息为",
+    "lastClickLabel": "target product buy button",
+    "lastDiagnosticAt": 1779247142034
+  },
+  "config": {
+    "mode": "flash",
+    "productName": "金邦GH330 32G高速USB3.2小巧便携金属机身车载U盘",
+    "productId": "1",
+    "targetPrice": 49.9,
+    "strictPriceMatch": false
+  }
+}

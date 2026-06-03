@@ -1,0 +1,28 @@
+{
+  "reason": "window-ended-no-order",
+  "url": "https://live.douyin.com/952520575686?from_search=true",
+  "state": {
+    "stopReason": "",
+    "tooManyRequests": 0,
+    "lastPanelOpenAt": 1779247713624,
+    "scans": 32,
+    "candidateNodes": 28,
+    "matchedProducts": 3,
+    "unavailableMatches": 0,
+    "clickAttempts": 3,
+    "successfulClicks": 3,
+    "paymentClicks": 0,
+    "abandonClicks": 0,
+    "orderSubmitted": false,
+    "lastMatchText": "1 【618直播特惠】 金邦GH330 32G高速USB3.2小巧便携金属机身车载U盘 运费险7天无理由退货 大促价 ¥49.9 去抢购",
+    "lastClickLabel": "target product buy button",
+    "lastDiagnosticAt": 1779247721200
+  },
+  "config": {
+    "mode": "flash",
+    "productName": "金邦GH330 32G高速USB3.2小巧便携金属机身车载U盘",
+    "productId": "1",
+    "targetPrice": 49.9,
+    "strictPriceMatch": true
+  }
+}

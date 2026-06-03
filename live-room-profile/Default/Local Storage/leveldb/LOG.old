@@ -1,0 +1,57 @@
+2026/05/20-12:21:12.178 47c0 Reusing MANIFEST D:\WebProject\DY脚本\live-room-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/05/20-12:21:12.183 47c0 Recovering log #73
+2026/05/20-12:21:12.185 47c0 Reusing old log D:\WebProject\DY脚本\live-room-profile\Default\Local Storage\leveldb/000073.log 
+2026/05/20-12:21:23.674 2928 Level-0 table #77: started
+2026/05/20-12:21:23.679 2928 Level-0 table #77: 25158 bytes OK
+2026/05/20-12:21:23.680 2928 Delete type=0 #73
+2026/05/20-12:21:23.681 47c0 Compacting 4@0 + 1@1 files
+2026/05/20-12:21:23.694 47c0 Generated table #78@0: 104 keys, 270619 bytes
+2026/05/20-12:21:23.695 47c0 Compacted 4@0 + 1@1 files => 270619 bytes
+2026/05/20-12:21:23.696 47c0 compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/05/20-12:21:23.697 47c0 Delete type=2 #66
+2026/05/20-12:21:23.698 47c0 Delete type=2 #69
+2026/05/20-12:21:23.698 47c0 Delete type=2 #71
+2026/05/20-12:21:23.698 47c0 Delete type=2 #74
+2026/05/20-12:21:23.698 47c0 Delete type=2 #77
+2026/05/20-12:36:23.179 2928 Level-0 table #80: started
+2026/05/20-12:36:23.184 2928 Level-0 table #80: 12758 bytes OK
+2026/05/20-12:36:23.186 2928 Delete type=0 #76
+2026/05/20-12:50:13.302 2928 Level-0 table #82: started
+2026/05/20-12:50:13.442 2928 Level-0 table #82: 12336 bytes OK
+2026/05/20-12:50:13.444 2928 Delete type=0 #79
+2026/05/20-13:04:13.306 2928 Level-0 table #84: started
+2026/05/20-13:04:13.310 2928 Level-0 table #84: 12519 bytes OK
+2026/05/20-13:04:13.312 2928 Delete type=0 #81
+2026/05/20-13:18:13.316 2928 Level-0 table #86: started
+2026/05/20-13:18:13.319 2928 Level-0 table #86: 12214 bytes OK
+2026/05/20-13:18:13.320 2928 Delete type=0 #83
+2026/05/20-13:18:13.321 2928 Compacting 4@0 + 1@1 files
+2026/05/20-13:18:13.327 2928 Generated table #87@0: 104 keys, 270660 bytes
+2026/05/20-13:18:13.327 2928 Compacted 4@0 + 1@1 files => 270660 bytes
+2026/05/20-13:18:13.327 2928 compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/05/20-13:18:13.328 2928 Delete type=2 #78
+2026/05/20-13:18:13.328 2928 Delete type=2 #80
+2026/05/20-13:18:13.328 2928 Delete type=2 #82
+2026/05/20-13:18:13.328 2928 Delete type=2 #84
+2026/05/20-13:18:13.328 2928 Delete type=2 #86
+2026/05/20-13:31:13.309 2928 Level-0 table #89: started
+2026/05/20-13:31:13.313 2928 Level-0 table #89: 12931 bytes OK
+2026/05/20-13:31:13.314 2928 Delete type=0 #85
+2026/05/20-13:44:13.303 2928 Level-0 table #91: started
+2026/05/20-13:44:13.305 2928 Level-0 table #91: 13238 bytes OK
+2026/05/20-13:44:13.306 2928 Delete type=0 #88
+2026/05/20-13:56:13.304 2928 Level-0 table #93: started
+2026/05/20-13:56:13.325 2928 Level-0 table #93: 12911 bytes OK
+2026/05/20-13:56:13.329 2928 Delete type=0 #90
+2026/05/20-14:09:13.303 2928 Level-0 table #95: started
+2026/05/20-14:09:13.306 2928 Level-0 table #95: 12970 bytes OK
+2026/05/20-14:09:13.308 2928 Delete type=0 #92
+2026/05/20-14:09:13.308 2928 Compacting 4@0 + 1@1 files
+2026/05/20-14:09:13.315 2928 Generated table #96@0: 104 keys, 270659 bytes
+2026/05/20-14:09:13.315 2928 Compacted 4@0 + 1@1 files => 270659 bytes
+2026/05/20-14:09:13.316 2928 compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/05/20-14:09:13.316 2928 Delete type=2 #87
+2026/05/20-14:09:13.316 2928 Delete type=2 #89
+2026/05/20-14:09:13.316 2928 Delete type=2 #91
+2026/05/20-14:09:13.316 2928 Delete type=2 #93
+2026/05/20-14:09:13.316 2928 Delete type=2 #95

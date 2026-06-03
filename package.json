@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "gui": "node gui_server.mjs",
+    "cli": "node live_room_auto_grab.mjs",
+    "check": "node --check automation_runner.mjs && node --check gui_server.mjs && node --check live_room_auto_grab.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

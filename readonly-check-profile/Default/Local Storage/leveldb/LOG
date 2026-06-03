@@ -1,0 +1,5 @@
+2026/05/20-12:14:45.200 7fc Creating DB D:\WebProject\DY脚本\readonly-check-profile\Default\Local Storage\leveldb since it was missing.
+2026/05/20-12:14:45.243 7fc Reusing MANIFEST D:\WebProject\DY脚本\readonly-check-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/05/20-12:15:27.798 4754 Level-0 table #5: started
+2026/05/20-12:15:27.817 4754 Level-0 table #5: 58874 bytes OK
+2026/05/20-12:15:27.826 4754 Delete type=0 #3

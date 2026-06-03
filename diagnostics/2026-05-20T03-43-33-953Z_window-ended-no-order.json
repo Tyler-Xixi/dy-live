@@ -1,0 +1,28 @@
+{
+  "reason": "window-ended-no-order",
+  "url": "https://live.douyin.com/952520575686?from_search=true",
+  "state": {
+    "stopReason": "",
+    "tooManyRequests": 0,
+    "lastPanelOpenAt": 1779248613578,
+    "scans": 154,
+    "candidateNodes": 0,
+    "matchedProducts": 1,
+    "unavailableMatches": 0,
+    "clickAttempts": 1,
+    "successfulClicks": 1,
+    "paymentClicks": 0,
+    "abandonClicks": 0,
+    "orderSubmitted": false,
+    "lastMatchText": "金邦存储旗舰店 1548本场点赞 + 加粉丝团 小时榜 100+ 人气榜 100+ 小时榜 100+ 标清 5/21 10:00 已预约 1钻 小心心 1钻 2钻 大啤酒 2钻 520钻 甜蜜礼盒 520钻 1钻 人气票 1钻 1钻 520快乐 1钻 99钻 告白气球 99钻 99钻 Thuglife 99钻 9钻 棒棒糖 9钻 10钻 甜心糖果 10钻 299钻 比心兔兔 299钻 1200钻 跑车 1200钻 9钻 520助力票 9钻 10钻 鲜花 10钻 更多 充值 2 讲解中 【618直播特惠】金邦天箭ddr4内存条DDR416G台式机游戏内存条 运费险7天无理由退货 大促价 ¥579 起 ¥919 去抢购 1 【618直播特惠】 金邦GH330 32G高速USB3.2小巧便携金属机身车载U盘 运费险7天无理由退货 大促价 ¥49.9 去抢购 3 Geil/金邦巨蟹升级款ddr5内存条60005600-7200频率台式机内存条 海力士A-die高品质 运费险7天无理由退货 大促价 ¥999 起 ¥1099 去抢购 4 Geil/金邦巨蟹 6000频率ddr5内存条台式机内存条电竞游戏电脑组件 运费险顺丰包邮7天无理由退货 大促价 ¥1299 起 去抢购 5 【618直播特惠】金邦巨蟹 6000频率ddr5内存条台式机内存条电竞游戏 运费险7天无理由退货 大促价 ¥1099 起 去抢购 6 【618直播特惠】金邦P3L 1t固态硬盘 pcie3.0 m.2办公电竞大容量ssd 运费险7天无理由退货 大促价 ¥849 去抢购 7 Geil/金邦P3P ssd固态硬盘1tb固态硬盘m.2接口TLC颗粒笔记本配件 3500m丨长江颗粒丨TLC丨 运费险7天无理由退货 大促价 ¥899 起 ¥1099 去抢购 8 Geil/金邦P4S ssd固态硬盘1t TLC颗粒M.2接口台式笔记本PS5游戏 7450m/s读写 运费险7天无理由退货 大促价 ¥669 起 ¥799 去抢购 9 【618直播特惠】金邦G7T TLC颗粒1t固态硬盘m.2 pcie4.0游戏硬盘ssd 运",
+    "lastClickLabel": "target product buy button",
+    "lastDiagnosticAt": 1779248613952
+  },
+  "config": {
+    "mode": "flash",
+    "productName": "金邦GH330 32G高速USB3.2小巧便携金属机身车载U盘",
+    "productId": "1",
+    "targetPrice": 49.9,
+    "strictPriceMatch": true
+  }
+}
