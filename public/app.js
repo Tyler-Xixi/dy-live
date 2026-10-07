@@ -48,7 +48,7 @@ function buildPayload() {
     orderStepDelayMs: numberValue("orderStepDelayMs"),
     clickTimeoutMs: numberValue("clickTimeoutMs"),
     strictPriceMatch: formValue("strictPriceMatch"),
-    submitPaymentAndAbandon: formValue("submitPaymentAndAbandon"),
+    autoPay: formValue("autoPay"),
     allowReservationClick: formValue("allowReservationClick"),
     dryRun: formValue("dryRun"),
     headless: formValue("headless"),
@@ -132,7 +132,14 @@ form.addEventListener("change", (event) => {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    const data = await postJson("/api/start", buildPayload());
+    const payload = buildPayload();
+    if (!payload.dryRun) {
+      const message = payload.autoPay
+        ? "已开启自动点击立即支付，可能直接产生真实扣款。确定启动吗？"
+        : "已关闭 DRY_RUN，将执行真实下单操作。确定启动吗？";
+      if (!window.confirm(message)) return;
+    }
+    const data = await postJson("/api/start", payload);
     setRunning(data.status.running);
   } catch (error) {
     appendClientLog("error", `启动失败：${error.message}`);

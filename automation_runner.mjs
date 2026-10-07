@@ -5,12 +5,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
-const DEFAULT_PRODUCT_NAME =
-  "Geil/金邦巨蟹升级款ddr5内存条6000频率台式机内存条";
+const DEFAULT_PRODUCT_NAME = "[6]手工制品硅胶捏捏玩具，默认微瑕";
 
 const BUY_TEXT_RE =
   /(抢购|立即抢|马上抢|立即购买|去购买|购买|下单|加入购物车|提交订单|去结算)/;
 const BUY_READY_TEXT_RE = /(立即购买|去抢购|抢购|立即抢|马上抢|购买|下单)/;
+const BUY_ACTION_TEXT_RE = /^\s*(?:立即购买|去抢购|立即抢|马上抢|抢购|去购买|购买|下单)\s*$/;
+const REVEAL_PRICE_TEXT_RE = /^\s*查看价格\s*$/;
+const REAL_NAME_REQUIRED_RE = /(未实名|尚未实名|请先实名认证|请完成实名认证|实名认证后)/;
 const WAITING_SALE_TEXT_RE =
   /(等待开售|待开售|即将开售|未开售|开售提醒|开抢提醒|预约|已预约|提醒我|距开售)/;
 const RESERVATION_TEXT_RE = /(预约|提醒我|开售提醒|开抢提醒)/;
@@ -27,33 +29,59 @@ const COMMERCE_PANEL_TEXT_RE =
   /(小黄车|购物车|购物袋|商品|商品列表|全部商品|讲解商品|正在讲解|橱窗|去看看)/;
 const ALL_PRODUCTS_TEXT_RE = /^\s*全部商品\s*$/;
 const ORDER_STEP_TEXT_RE =
-  /(确定|确认|选好了|完成|下一步|提交订单|提交|去结算|立即购买|下单)/;
+  /^\s*(?:确定|确认|选好了|完成|下一步|提交订单|提交|去结算)\s*$/;
+const PAYMENT_ACTION_TEXT_RE =
+  /^\s*(?:支付|立即支付|确认支付|确认付款|提交支付|去支付)(?:\s*(?:¥|￥)?\s*\d+(?:\.\d{1,2})?\s*元?)?\s*$/;
+const PAYMENT_PRIMARY_SELECTOR = "div.iHAKgO8B";
+const PRODUCT_IMAGE_VIEWER_SELECTOR = "div.rpiGKCVd";
+const PRODUCT_IMAGE_VIEWER_GUARD_ID = "dyla-product-image-viewer-guard";
+const PRODUCT_OPTION_SELECTOR = "div.ufz0AqTE";
 const DISMISS_TEXT_RE =
-  /(我知道了|知道了|同意|允许|稍后再说|以后再说|关闭|继续看播|继续观看|继续看直播)/;
+  /(我知道了|知道了|允许|稍后再说|以后再说|关闭|继续看播|继续观看|继续看直播)/;
+const USER_AGREEMENT_TITLE_RE = /^\s*使用须知\s*$/;
 const UNAVAILABLE_TEXT_RE =
   /(售罄|已售罄|抢光|已抢光|缺货|补货中|已结束|已下架|不可购买|卖光)/;
+const MAX_NETWORK_LOG_BYTES = 10 * 1024 * 1024;
+const NETWORK_LOG_BACKUPS = 3;
+const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function rotateFileIfNeeded(filePath, maxBytes = MAX_NETWORK_LOG_BYTES) {
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size < maxBytes) return;
+  for (let index = NETWORK_LOG_BACKUPS; index >= 1; index -= 1) {
+    const current = `${filePath}.${index}`;
+    if (index === NETWORK_LOG_BACKUPS) {
+      fs.rmSync(current, { force: true });
+      continue;
+    }
+    if (fs.existsSync(current)) fs.renameSync(current, `${filePath}.${index + 1}`);
+  }
+  fs.renameSync(filePath, `${filePath}.1`);
+}
 
 export const DEFAULT_CONFIG = {
   mode: "flash",
-  liveUrl: "https://live.douyin.com/952520575686?anchor_id=",
+  liveUrl: "https://live.douyin.com/749508379274",
   productUrl: "",
   productName: DEFAULT_PRODUCT_NAME,
-  productId: "",
-  targetPrice: 799,
+  productId: "2",
+  targetPrice: 6,
   dryRun: true,
   headless: false,
   pollMs: 80,
   jitterMs: 10,
   monitorDurationMs: 75_000,
   prewarmMs: 300,
-  strictPriceMatch: false,
+  strictPriceMatch: true,
   allowReservationClick: false,
   openPanelIntervalMs: 500,
   maxOrderSteps: 8,
-  postBuyDelayMs: 120,
-  orderStepDelayMs: 120,
+  postBuyDelayMs: 500,
+  orderStepDelayMs: 300,
   clickTimeoutMs: 700,
-  submitPaymentAndAbandon: true,
+  autoPay: false,
+  multiOptionEnabled: false,
+  optionNames: "",
+  submitPaymentAndAbandon: false,
   saveDiagnostics: true,
   maxRetries: 7,
   retryBaseMs: 200,
@@ -71,6 +99,20 @@ class GracefulStop extends Error {
   constructor(message) {
     super(message);
     this.name = "GracefulStop";
+  }
+}
+
+class AccountVerificationRequired extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AccountVerificationRequired";
+  }
+}
+
+class UserAgreementRequired extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UserAgreementRequired";
   }
 }
 
@@ -98,16 +140,19 @@ function parseScheduleWindows(value) {
         .split(/[,\n;|]+/)
         .map((item) => item.trim());
 
-  return rawItems
-    .filter(Boolean)
-    .slice(0, 4)
-    .map((item) => {
+  const entries = rawItems.filter(Boolean);
+  if (entries.length > 4) {
+    throw new Error(`监控时间最多允许四个：${entries.slice(4).join("、")}`);
+  }
+  return entries.map((item) => {
       const match = String(item).match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
-      if (!match) return null;
+      if (!match) throw new Error(`监控时间格式无效：${item}`);
       const hour = Number(match[1]);
       const minute = Number(match[2]);
       const second = Number(match[3] || 0);
-      if (hour > 23 || minute > 59 || second > 59) return null;
+      if (hour > 23 || minute > 59 || second > 59) {
+        throw new Error(`监控时间超出范围：${item}`);
+      }
       return {
         label: `${String(hour).padStart(2, "0")}:${String(minute).padStart(
           2,
@@ -117,8 +162,7 @@ function parseScheduleWindows(value) {
         minute,
         second,
       };
-    })
-    .filter(Boolean);
+    });
 }
 
 function normalizeText(value) {
@@ -132,6 +176,16 @@ function compactText(value, limit = 300) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, limit);
+}
+
+function parseProductOptions(value) {
+  return String(value || "").split(/[|;；\n]+/).map(item => item.trim()).filter(Boolean).map(item => {
+    const split = item.indexOf("=");
+    const group = split < 0 ? "" : item.slice(0, split).trim();
+    const name = split < 0 ? item : item.slice(split + 1).trim();
+    if (!name || (split >= 0 && !group)) throw new Error("选项格式应为选项名称或规格组=选项名称");
+    return { group, name };
+  });
 }
 
 function escapeRegex(value) {
@@ -148,19 +202,19 @@ function keywordTokens(config) {
       return true;
     });
 
-  if (values.length > 0) return [...new Set(values)];
-  return ["Geil", "金邦", "巨蟹", "ddr5", "6000"];
+  return [...new Set(values)];
 }
 
 function productMatches(text, config) {
   const haystack = normalizeText(text);
   const exactName = normalizeText(config.productName);
 
-  if (exactName && haystack.includes(exactName)) return true;
+  if (!exactName) return true;
+  if (haystack.includes(exactName)) return true;
 
   const tokens = keywordTokens(config).map(normalizeText);
   const hitCount = tokens.filter((token) => haystack.includes(token)).length;
-  const requiredHits = Math.min(Math.max(3, Math.ceil(tokens.length * 0.75)), 5);
+  const requiredHits = Math.min(tokens.length, Math.max(1, Math.ceil(tokens.length * 0.75)));
   return tokens.length > 0 && hitCount >= requiredHits;
 }
 
@@ -195,9 +249,14 @@ function exactTargetPriceMatches(text, config) {
   const targetPrice = Number(config.targetPrice);
   if (!Number.isFinite(targetPrice) || targetPrice <= 0) return false;
 
-  const prices = [
-    ...String(text || "").matchAll(/(?:￥|¥|RMB|CNY)?\s*(\d+(?:\.\d{1,2})?)/gi),
-  ].map((match) => Number(match[1]));
+  const value = String(text || "");
+  const patterns = [
+    /(?:￥|¥|RMB|CNY)\s*(\d+(?:\.\d{1,2})?)/gi,
+    /(?:价格|售价|到手价|抢购价|券后价|活动价)\s*[:：]?\s*(?:￥|¥)?\s*(\d+(?:\.\d{1,2})?)/gi,
+  ];
+  const prices = patterns.flatMap((pattern) =>
+    [...value.matchAll(pattern)].map((match) => Number(match[1])),
+  );
 
   return prices.some((price) => Math.abs(price - targetPrice) < 0.01);
 }
@@ -214,8 +273,8 @@ function productUnavailable(text) {
 function productActionState(text) {
   const value = String(text || "");
   if (productUnavailable(value)) return "unavailable";
-  if (BUY_READY_TEXT_RE.test(value)) return "ready";
   if (WAITING_SALE_TEXT_RE.test(value)) return "waiting";
+  if (BUY_READY_TEXT_RE.test(value)) return "ready";
   return "unknown";
 }
 
@@ -231,11 +290,31 @@ function isLikelyListProductCardText(text, config) {
   const keywordPriceFallback = !indexMatched && exactTargetPriceMatches(value, config);
   if (!indexMatched && !keywordPriceFallback) return false;
 
-  return productActionState(value) !== "unknown" && priceMatches(value, config);
+  return productActionState(value) !== "unknown" && (config.multiOptionEnabled || priceMatches(value, config));
+}
+
+function isHiddenPriceTargetCardText(text, config) {
+  const value = compactText(text, 900);
+  if (!value || value.length > 820 || productUnavailable(value)) return false;
+  return (
+    value.includes("查看价格") &&
+    productMatches(value, config) &&
+    productListIndexMatches(value, config)
+  );
+}
+
+function isCheckoutContextText(text) {
+  const value = compactText(text, 2400);
+  return (
+    value.includes("优惠明细") &&
+    (value.includes("订单留言") || value.includes("购买数量"))
+  );
 }
 
 function productMatchReason(text, config) {
-  if (productListIndexMatches(text, config)) return "编号命中";
+  if (String(config.productId || "").trim() && productListIndexMatches(text, config)) {
+    return "编号命中";
+  }
   if (productMatches(text, config) && exactTargetPriceMatches(text, config)) {
     return "关键词+价格命中";
   }
@@ -250,22 +329,32 @@ async function textOf(locator, timeout = 350) {
   }
 }
 
+function scheduleTodayServerMs(point, nowServerMs) {
+  const chinaTime = new Date(nowServerMs + CHINA_TIME_OFFSET_MS);
+  return (
+    Date.UTC(
+      chinaTime.getUTCFullYear(),
+      chinaTime.getUTCMonth(),
+      chinaTime.getUTCDate(),
+      point.hour,
+      point.minute,
+      point.second,
+      0,
+    ) - CHINA_TIME_OFFSET_MS
+  );
+}
+
 function scheduleCandidateServerMs(point, nowServerMs) {
-  const candidate = new Date(nowServerMs);
-  candidate.setHours(point.hour, point.minute, point.second, 0);
-  if (candidate.getTime() <= nowServerMs) {
-    candidate.setDate(candidate.getDate() + 1);
-  }
-  return candidate.getTime();
+  let candidateMs = scheduleTodayServerMs(point, nowServerMs);
+  if (candidateMs <= nowServerMs) candidateMs += 24 * 60 * 60 * 1000;
+  return candidateMs;
 }
 
 function activeWindowEndLocalMs(config, clockOffsetMs) {
   const nowLocalMs = Date.now();
   const nowServerMs = nowLocalMs + clockOffsetMs;
   for (const point of config.scheduleWindows) {
-    const start = new Date(nowServerMs);
-    start.setHours(point.hour, point.minute, point.second, 0);
-    const startServerMs = start.getTime();
+    const startServerMs = scheduleTodayServerMs(point, nowServerMs);
     const endServerMs = startServerMs + config.monitorDurationMs;
     if (nowServerMs >= startServerMs - config.prewarmMs && nowServerMs < endServerMs) {
       return endServerMs - clockOffsetMs;
@@ -382,6 +471,12 @@ function buildConfig(overrides = {}) {
     0,
   );
   config.clickTimeoutMs = asNumber(config.clickTimeoutMs, DEFAULT_CONFIG.clickTimeoutMs, 100);
+  config.autoPay = asBoolean(config.autoPay, DEFAULT_CONFIG.autoPay);
+  config.multiOptionEnabled = asBoolean(config.multiOptionEnabled, false);
+  config.optionNames = String(config.optionNames || "").trim();
+  if (config.multiOptionEnabled && !parseProductOptions(config.optionNames).length) {
+    throw new Error("启用商品多选项时必须填写选项名称");
+  }
   config.submitPaymentAndAbandon = asBoolean(
     config.submitPaymentAndAbandon,
     DEFAULT_CONFIG.submitPaymentAndAbandon,
@@ -428,6 +523,9 @@ export function configFromEnv(env = process.env) {
     postBuyDelayMs: env.POST_BUY_DELAY_MS,
     orderStepDelayMs: env.ORDER_STEP_DELAY_MS,
     clickTimeoutMs: env.CLICK_TIMEOUT_MS,
+    autoPay: env.AUTO_PAY,
+    multiOptionEnabled: env.MULTI_OPTION_ENABLED,
+    optionNames: env.OPTION_NAMES,
     submitPaymentAndAbandon: env.SUBMIT_PAYMENT_AND_ABANDON,
     saveDiagnostics: env.SAVE_DIAGNOSTICS,
     maxRetries: env.MAX_RETRIES,
@@ -457,6 +555,8 @@ function createRunContext(config, hooks) {
     paymentClicks: 0,
     abandonClicks: 0,
     orderSubmitted: false,
+    unsafeCheckout: false,
+    optionsVerified: false,
     lastMatchText: "",
     lastClickLabel: "",
     lastDiagnosticAt: 0,
@@ -509,6 +609,7 @@ async function launchContext(ctx) {
     viewport: { width: 1365, height: 900 },
     locale: "zh-CN",
     timezoneId: "Asia/Shanghai",
+    args: ["--no-proxy-server"],
   };
 
   try {
@@ -586,15 +687,19 @@ async function captureNetworkEvidence(page, ctx) {
 
     const contentType = response.headers()["content-type"] || "";
     if (!contentType.includes("json")) return;
+    const contentLength = Number(response.headers()["content-length"] || 0);
+    if (Number.isFinite(contentLength) && contentLength > 1024 * 1024) return;
 
     try {
       const json = await response.json();
       const body = JSON.stringify(json);
       if (productMatches(body, ctx.config) || priceMatches(body, ctx.config)) {
         ctx.log("info", `记录相关响应：${status} ${url}`);
+        fs.mkdirSync(path.dirname(ctx.config.networkLogPath), { recursive: true });
+        rotateFileIfNeeded(ctx.config.networkLogPath);
         fs.appendFileSync(
           ctx.config.networkLogPath,
-          JSON.stringify({ time: nowText(), status, url, body }) + "\n",
+          JSON.stringify({ time: nowText(), status, url, body: body.slice(0, 6_000) }) + "\n",
           "utf8",
         );
       }
@@ -604,9 +709,9 @@ async function captureNetworkEvidence(page, ctx) {
   });
 }
 
-async function safeClick(locator, label, ctx) {
+async function safeClick(locator, label, ctx, allowDryRunClick = false) {
   ctx.state.clickAttempts += 1;
-  if (ctx.config.dryRun) {
+  if (ctx.config.dryRun && !allowDryRunClick) {
     ctx.log("info", `DRY_RUN 命中动作：${label}`);
     ctx.state.lastClickLabel = label;
     return true;
@@ -625,20 +730,124 @@ async function safeClick(locator, label, ctx) {
   return true;
 }
 
-async function clickFirstVisible(page, candidates, label, ctx) {
+async function clickFirstVisible(page, candidates, label, ctx, allowDryRunClick = false) {
   for (const candidate of candidates) {
     ctx.assertRunning();
     try {
-      if ((await candidate.count()) === 0) continue;
-      const action = candidate.first();
-      if (!(await action.isVisible({ timeout: 120 }))) continue;
-      if (!(await action.isEnabled({ timeout: 120 }).catch(() => true))) continue;
-      return await safeClick(action, label, ctx);
+      const count = Math.min(await candidate.count(), 12);
+      for (let index = 0; index < count; index += 1) {
+        const action = candidate.nth(index);
+        if (!(await action.isVisible({ timeout: 120 }))) continue;
+        if (!(await action.isEnabled({ timeout: 120 }).catch(() => true))) continue;
+        return await safeClick(action, label, ctx, allowDryRunClick);
+      }
     } catch {
       // Try the next candidate.
     }
   }
   return false;
+}
+
+async function safeExactActionButtons(page, pattern, ctx) {
+  const viewport = page.viewportSize() || { width: 1365, height: 900 };
+  const maxArea = viewport.width * viewport.height * 0.22;
+  const safe = [];
+  const seen = new Set();
+  const candidateGroups = [
+    page.locator(PAYMENT_PRIMARY_SELECTOR),
+    page.locator("button, [role=button], div, span").filter({ hasText: pattern }),
+  ];
+  for (const candidates of candidateGroups) {
+    const count = Math.min(await candidates.count().catch(() => 0), 20);
+    for (let index = 0; index < count; index += 1) {
+      ctx.assertRunning();
+      const action = candidates.nth(index);
+      try {
+        const text = compactText(await action.innerText({ timeout: 180 }), 160);
+        pattern.lastIndex = 0;
+        if (!pattern.test(text)) continue;
+        pattern.lastIndex = 0;
+        if ((await action.locator("img, picture, video, canvas").count()) > 0) continue;
+        const box = await action.boundingBox({ timeout: 180 });
+        if (!box || box.width <= 48 || box.height <= 20) continue;
+        if (box.height > 160 || box.width * box.height > maxArea) continue;
+        if (!(await action.isVisible({ timeout: 120 }))) continue;
+        const key = [
+          Math.round(box.x),
+          Math.round(box.y),
+          Math.round(box.width),
+          Math.round(box.height),
+          text,
+        ].join(":");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        safe.push(action);
+      } catch {
+        // Reject malformed or unstable candidates.
+      }
+    }
+  }
+  return safe;
+}
+
+async function clickSafeExactActionButton(page, pattern, label, ctx) {
+  const actions = await safeExactActionButtons(page, pattern, ctx);
+  if (actions.length === 0) return false;
+  try {
+    const details = await actions[0].evaluate((el) => ({
+      tag: el.tagName.toLowerCase(),
+      className: typeof el.className === "string" ? el.className : "",
+      role: el.getAttribute("role") || "",
+      text: el.innerText || "",
+    }));
+    ctx.log(
+      "info",
+      `支付控件已锁定：tag=${details.tag} class=${details.className} text=${compactText(details.text, 80)}`,
+    );
+  } catch {
+    // The validated locator is still used even if diagnostics are unavailable.
+  }
+  return safeClick(actions[0], label, ctx);
+}
+
+async function installProductImageViewerGuard(page) {
+  try {
+    const result = await page.evaluate(
+      ({ selector, styleId }) => {
+        let style = document.getElementById(styleId);
+        if (!style) {
+          style = document.createElement("style");
+          style.id = styleId;
+          style.textContent = `${selector} { display: none !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }`;
+          (document.head || document.documentElement).appendChild(style);
+        }
+        const nodes = Array.from(document.querySelectorAll(selector));
+        for (const node of nodes) {
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("opacity", "0", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        }
+        return { found: nodes.length > 0, count: nodes.length };
+      },
+      { selector: PRODUCT_IMAGE_VIEWER_SELECTOR, styleId: PRODUCT_IMAGE_VIEWER_GUARD_ID },
+    );
+    return Boolean(result?.found);
+  } catch {
+    return false;
+  }
+}
+
+async function dismissProductImageViewer(page, ctx) {
+  const found = await installProductImageViewerGuard(page);
+  if (!found) return false;
+
+  ctx.log("warn", "检测到抖音商品大图遮罩（rpiGKCVd），正在自动关闭后再支付");
+  await page.keyboard.press("Escape").catch(() => {});
+  await waitWithAbort(Math.min(180, ctx.config.orderStepDelayMs), ctx);
+  await installProductImageViewerGuard(page);
+  ctx.log("info", "商品大图遮罩已自动抑制，继续检查支付按钮");
+  return true;
 }
 
 async function visibleTextElementCandidates(page, pattern, ctx) {
@@ -678,14 +887,14 @@ async function hasVisibleTextElement(page, pattern, ctx) {
   return (await visibleTextElementCandidates(page, pattern, ctx)).length > 0;
 }
 
-async function clickVisibleTextElement(page, pattern, label, ctx) {
+async function clickVisibleTextElement(page, pattern, label, ctx, allowDryRunClick = false) {
   const candidates = await visibleTextElementCandidates(page, pattern, ctx);
 
   for (const candidate of candidates) {
     ctx.assertRunning();
     try {
       const { handle, box, text } = candidate;
-      if (ctx.config.dryRun) {
+      if (ctx.config.dryRun && !allowDryRunClick) {
         ctx.log("info", `DRY_RUN 命中动作：${label} (${text})`);
         return true;
       }
@@ -754,7 +963,7 @@ async function dismissBlockingOverlays(page, ctx) {
     page.getByText(DISMISS_TEXT_RE),
     page.locator("button, [role=button], a").filter({ hasText: DISMISS_TEXT_RE }),
   ];
-  await clickFirstVisible(page, candidates, "dismiss overlay", ctx);
+  await clickFirstVisible(page, candidates, "dismiss overlay", ctx, true);
 }
 
 async function hasVisibleAllProductsEntry(page) {
@@ -769,6 +978,7 @@ async function hasVisibleProductList(page) {
   const candidates = [
     page.locator('[data-e2e="promotion-title"], [data-e2e="shop-buyBtn"], [data-e2e="price-Area"]'),
     page.locator('[role="dialog"] li, [role="dialog"] [class*="product" i], [role="dialog"] [class*="goods" i]'),
+    page.locator("li").filter({ has: page.getByRole("button", { name: BUY_TEXT_RE }) }),
   ];
 
   for (const candidate of candidates) {
@@ -791,12 +1001,28 @@ async function openCommercePanel(page, ctx, force = false) {
   }
   ctx.state.lastPanelOpenAt = now;
 
-  if (await clickVisibleTextElement(page, ALL_PRODUCTS_TEXT_RE, "open all products tab", ctx)) {
+  if (
+    await clickVisibleTextElement(
+      page,
+      ALL_PRODUCTS_TEXT_RE,
+      "open all products tab",
+      ctx,
+      true,
+    )
+  ) {
     await waitWithAbort(ctx.config.orderStepDelayMs, ctx);
     return true;
   }
 
-  if (await clickVisibleTextElement(page, COMMERCE_PANEL_TEXT_RE, "open live commerce panel", ctx)) {
+  if (
+    await clickVisibleTextElement(
+      page,
+      COMMERCE_PANEL_TEXT_RE,
+      "open live commerce panel",
+      ctx,
+      true,
+    )
+  ) {
     await waitWithAbort(ctx.config.orderStepDelayMs, ctx);
     return true;
   }
@@ -813,7 +1039,13 @@ async function openCommercePanel(page, ctx, force = false) {
     page.locator('[aria-label*="购物"], [aria-label*="商品"], [title*="购物"], [title*="商品"]'),
   ];
 
-  const opened = await clickFirstVisible(page, candidates, "open live commerce panel", ctx);
+  const opened = await clickFirstVisible(
+    page,
+    candidates,
+    "open live commerce panel",
+    ctx,
+    true,
+  );
   if (opened) {
     await waitWithAbort(ctx.config.orderStepDelayMs, ctx);
   }
@@ -863,14 +1095,11 @@ async function scrollLikelyProductLists(page, ctx) {
 
 async function findAndClickBuyAction(page, container, ctx, label = "buy/order button") {
   const actions = [
-    container.getByRole("button", { name: BUY_TEXT_RE }).first(),
-    container.getByRole("link", { name: BUY_TEXT_RE }).first(),
+    container.getByRole("button", { name: BUY_ACTION_TEXT_RE }).first(),
+    container.getByRole("link", { name: BUY_ACTION_TEXT_RE }).first(),
     container
-      .locator("button, a, [role=button], [class*=button], [class*=btn]")
-      .filter({ hasText: BUY_TEXT_RE })
-      .first(),
-    container
-      .locator('[data-e2e*="buy" i], [data-e2e*="cart" i], [data-e2e*="order" i]')
+      .locator("button, a, [role=button]")
+      .filter({ hasText: BUY_ACTION_TEXT_RE })
       .first(),
   ];
 
@@ -916,6 +1145,30 @@ async function findTightProductContainers(node, ctx) {
     matched.push({ locator: candidate, text });
   }
 
+  matched.sort((a, b) => a.text.length - b.text.length);
+  return matched.slice(0, 3);
+}
+
+async function findHiddenPriceContainers(node, ctx) {
+  const candidates = [
+    node,
+    node.locator("xpath=ancestor-or-self::*[self::div or self::li or self::section][1]"),
+    node.locator("xpath=ancestor::*[self::div or self::li or self::section][2]"),
+    node.locator("xpath=ancestor::*[self::div or self::li or self::section][3]"),
+    node.locator("xpath=ancestor::*[self::div or self::li or self::section][4]"),
+  ];
+
+  const matched = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    ctx.assertRunning();
+    const text = compactText(await textOf(candidate), 700);
+    if (!isHiddenPriceTargetCardText(text, ctx.config)) continue;
+    const normalized = normalizeText(text);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    matched.push({ locator: candidate, text });
+  }
   matched.sort((a, b) => a.text.length - b.text.length);
   return matched.slice(0, 3);
 }
@@ -984,40 +1237,88 @@ async function confirmAbandonPayment(page, ctx) {
   return false;
 }
 
+async function selectProductOptions(page, ctx, required = false) {
+  if (!ctx.config.multiOptionEnabled) return true;
+  const requested = parseProductOptions(ctx.config.optionNames);
+  const controls = page.locator(PRODUCT_OPTION_SELECTOR);
+  const visible = [];
+  for (let i = 0; i < Math.min(await controls.count(), 500); i++) {
+    if (await controls.nth(i).isVisible()) visible.push(controls.nth(i));
+  }
+  if (!visible.length) {
+    if (ctx.state.optionsVerified) return true;
+    if (required) throw new GracefulStop("已停止：进入支付页但未确认指定规格选中，未点击支付");
+    return false;
+  }
+  const details = action => action.evaluate(el => ({
+    text: (el.innerText || "").trim(),
+    group: (el.closest(".YTFcT_zp")?.querySelector(".R_G6ohly")?.innerText || "").trim(),
+    selected: el.classList.contains("vZSOutR4") || el.getAttribute("aria-selected") === "true",
+    disabled: el.getAttribute("aria-disabled") === "true" || el.hasAttribute("disabled") ||
+      /disabled|soldout|unavailable/i.test(el.className) || getComputedStyle(el).pointerEvents === "none",
+  }));
+  const chosen = [];
+  const usedGroups = new Set();
+  const availableGroups = new Set();
+  for (const action of visible) availableGroups.add((await details(action)).group);
+  for (const { group, name } of requested) {
+    const matches = [];
+    for (const action of visible) {
+      const data = await details(action);
+      if (data.text === name && (!group || data.group === group)) matches.push({ action, data });
+    }
+    if (matches.length !== 1) throw new GracefulStop(`已停止：规格“${group ? group + "=" : ""}${name}”未找到或有重名，请填写规格组=选项名称`);
+    const { action, data } = matches[0];
+    if (usedGroups.has(data.group)) throw new GracefulStop("已停止：同一规格组只能选择一个选项");
+    usedGroups.add(data.group);
+    if (data.disabled) throw new GracefulStop(`已停止：指定规格“${name}”不可选择或已售罄`);
+    if (!data.selected) {
+      await safeClick(action, `select product option: ${name}`, ctx);
+      await waitWithAbort(Math.max(150, ctx.config.orderStepDelayMs), ctx);
+    }
+    chosen.push(action);
+  }
+  if (usedGroups.size !== availableGroups.size) throw new GracefulStop("已停止：请为每个规格组填写一个选项名称，未点击支付");
+  if (ctx.config.dryRun) return false;
+  for (const action of chosen) {
+    if (!(await details(action)).selected) throw new GracefulStop("已停止：点击后未确认指定规格全部选中，未点击支付");
+  }
+  if (!ctx.state.optionsVerified) ctx.log("info", `指定商品规格已全部确认选中：${ctx.config.optionNames}`);
+  ctx.state.optionsVerified = true;
+  return true;
+}
+
 async function submitPaymentThenAbandon(page, ctx) {
+  // The checkout can be ready underneath Douyin's product-image viewer. Remove
+  // that viewer before validating/clicking the real payment control.
+  await dismissProductImageViewer(page, ctx);
   const paymentButtonVisible =
-    (await hasVisibleTextElement(page, PAYMENT_AMOUNT_TEXT_RE, ctx)) ||
-    (await page
-      .locator("button, a, [role=button], [class*=button], [class*=btn]")
-      .filter({ hasText: PAYMENT_SUBMIT_TEXT_RE })
-      .first()
-      .isVisible({ timeout: 160 })
-      .catch(() => false));
+    (await safeExactActionButtons(page, PAYMENT_ACTION_TEXT_RE, ctx)).length > 0;
 
   if (!paymentButtonVisible) return false;
+  if (!(await selectProductOptions(page, ctx, true))) return false;
+  if (ctx.config.multiOptionEnabled && ctx.config.strictPriceMatch) {
+    const actions = await safeExactActionButtons(page, PAYMENT_ACTION_TEXT_RE, ctx);
+    const text = actions.length ? await actions[0].innerText() : "";
+    if (!exactTargetPriceMatches(text, ctx.config)) throw new GracefulStop(`已停止：选择规格后的支付金额“${compactText(text)}”与目标价格不一致，未点击支付`);
+  }
 
-  if (!ctx.config.submitPaymentAndAbandon) {
+  if (!ctx.config.autoPay && !ctx.config.submitPaymentAndAbandon) {
     ctx.log("info", "检测到支付页，已按配置停在支付前");
     return true;
   }
 
-  ctx.log("info", "检测到支付页，开始点击支付按钮以提交订单");
-  const paymentCandidates = [
-    page.getByRole("button", { name: PAYMENT_SUBMIT_TEXT_RE }),
-    page.getByRole("link", { name: PAYMENT_SUBMIT_TEXT_RE }),
-    page.locator("button, a, [role=button], [class*=button], [class*=btn]").filter({
-      hasText: PAYMENT_SUBMIT_TEXT_RE,
-    }),
-  ];
-
-  const clickedPayment =
-    (await clickFirstVisible(page, paymentCandidates, "submit payment / create order", ctx)) ||
-    (await clickVisibleTextElement(
-      page,
-      PAYMENT_AMOUNT_TEXT_RE,
-      "submit payment / create order",
-      ctx,
-    ));
+  if (ctx.config.autoPay) {
+    ctx.log("warn", "检测到支付页，自动支付已开启，准备点击“立即支付”");
+  } else {
+    ctx.log("info", "检测到支付页，开始点击支付按钮以提交订单");
+  }
+  const clickedPayment = await clickSafeExactActionButton(
+    page,
+    PAYMENT_ACTION_TEXT_RE,
+    "submit payment / create order",
+    ctx,
+  );
   if (!clickedPayment) {
     ctx.log("warn", "已进入支付页，但未找到可点击的支付按钮");
     return false;
@@ -1026,6 +1327,14 @@ async function submitPaymentThenAbandon(page, ctx) {
   ctx.state.paymentClicks += 1;
   ctx.state.orderSubmitted = true;
   await waitWithAbort(ctx.config.orderStepDelayMs, ctx);
+
+  if (ctx.config.autoPay) {
+    ctx.log(
+      "warn",
+      "已自动点击“立即支付”。如平台要求支付密码、验证码、扫码或其他安全验证，仍需按平台要求完成，程序不会绕过安全验证",
+    );
+    return true;
+  }
 
   const closed = await closePaymentLayer(page, ctx);
   const abandoned = await confirmAbandonPayment(page, ctx);
@@ -1046,13 +1355,24 @@ async function advanceOrderFlow(page, ctx) {
 
   for (let step = 1; step <= ctx.config.maxOrderSteps; step += 1) {
     ctx.assertRunning();
+    await selectProductOptions(page, ctx);
     if (await submitPaymentThenAbandon(page, ctx)) return true;
+    const bodyText = await page.locator("body").innerText({ timeout: 300 }).catch(() => "");
+    if (isCheckoutContextText(bodyText)) {
+      ctx.state.unsafeCheckout = true;
+      ctx.log(
+        "warn",
+        "已进入订单结算页，但未识别到安全的支付按钮；为防止误点商品图片，已停止所有其他点击",
+      );
+      await saveDiagnostics(page, ctx, "checkout-payment-button-not-safe");
+      return false;
+    }
     await dismissBlockingOverlays(page, ctx);
 
     const candidates = [
       page.getByRole("button", { name: ORDER_STEP_TEXT_RE }),
       page.getByRole("link", { name: ORDER_STEP_TEXT_RE }),
-      page.locator("button, a, [role=button], [class*=button], [class*=btn]").filter({
+      page.locator("button, a, [role=button]").filter({
         hasText: ORDER_STEP_TEXT_RE,
       }),
     ];
@@ -1071,27 +1391,66 @@ async function advanceOrderFlow(page, ctx) {
 
 async function scanDomAndOrder(page, ctx) {
   ctx.state.scans += 1;
+  // Install before any product click so the known viewer is hidden immediately.
+  await installProductImageViewerGuard(page);
+  const agreement = page.getByText(USER_AGREEMENT_TITLE_RE);
+  const agreementCount = Math.min(await agreement.count().catch(() => 0), 8);
+  for (let index = 0; index < agreementCount; index += 1) {
+    if (await agreement.nth(index).isVisible({ timeout: 120 }).catch(() => false)) {
+      await saveDiagnostics(page, ctx, "user-agreement-required");
+      throw new UserAgreementRequired(
+        "直播间商品面板要求账号本人确认“使用须知”。请在打开的抖音页面中阅读并手动点击一次“同意”，然后重新启动监控。",
+      );
+    }
+  }
+  const verification = page.getByText(REAL_NAME_REQUIRED_RE);
+  const verificationCount = Math.min(await verification.count().catch(() => 0), 12);
+  for (let index = 0; index < verificationCount; index += 1) {
+    if (await verification.nth(index).isVisible({ timeout: 120 }).catch(() => false)) {
+      await saveDiagnostics(page, ctx, "real-name-verification-required");
+      throw new AccountVerificationRequired(
+        "抖音当前要求此账号先完成实名认证，自动下单无法继续。请在官方抖音 App 内完成实名认证后，再重新登录并测试。",
+      );
+    }
+  }
+  await selectProductOptions(page, ctx);
   if (await submitPaymentThenAbandon(page, ctx)) return true;
+  const checkoutBodyText = await page.locator("body").innerText({ timeout: 300 }).catch(() => "");
+  if (isCheckoutContextText(checkoutBodyText)) {
+    if (!ctx.state.unsafeCheckout) {
+      ctx.state.unsafeCheckout = true;
+      ctx.log(
+        "warn",
+        "已进入订单结算页，但未识别到安全的支付按钮；为防止误点商品图片，已停止所有其他点击",
+      );
+      await saveDiagnostics(page, ctx, "checkout-payment-button-not-safe");
+    }
+    return false;
+  }
+  if (ctx.state.unsafeCheckout) return false;
   await ensureAllProductsPanel(page, ctx);
 
   const tokens = keywordTokens(ctx.config);
-  const tokenRegex = new RegExp(tokens.map(escapeRegex).join("|"), "i");
-  const productNodes = page
-    .locator(
-      [
-        "li",
-        '[role="dialog"] *',
-        '[class*="product" i]',
-        '[class*="goods" i]',
-        '[class*="sku" i]',
-        '[data-e2e*="product" i]',
-        '[data-e2e*="goods" i]',
-      ].join(", "),
-    )
-    .filter({ hasText: tokenRegex })
-    .or(page.locator('[data-e2e="promotion-title"]').filter({ hasText: tokenRegex }).locator("xpath=ancestor::li[1]"))
-    .or(page.locator('[data-e2e="shop-buyBtn"]').locator("xpath=ancestor::li[1]").filter({ hasText: tokenRegex }))
-    .or(page.locator('[data-e2e="price-Area"]').locator("xpath=ancestor::li[1]").filter({ hasText: tokenRegex }));
+  const baseNodes = page.locator(
+    [
+      "li",
+      '[role="dialog"] *',
+      '[class*="product" i]',
+      '[class*="goods" i]',
+      '[class*="sku" i]',
+      '[data-e2e*="product" i]',
+      '[data-e2e*="goods" i]',
+    ].join(", "),
+  );
+  let productNodes = baseNodes;
+  if (tokens.length > 0) {
+    const tokenRegex = new RegExp(tokens.map(escapeRegex).join("|"), "i");
+    productNodes = baseNodes
+      .filter({ hasText: tokenRegex })
+      .or(page.locator('[data-e2e="promotion-title"]').filter({ hasText: tokenRegex }).locator("xpath=ancestor::li[1]"))
+      .or(page.locator('[data-e2e="shop-buyBtn"]').locator("xpath=ancestor::li[1]").filter({ hasText: tokenRegex }))
+      .or(page.locator('[data-e2e="price-Area"]').locator("xpath=ancestor::li[1]").filter({ hasText: tokenRegex }));
+  }
 
   const total = await productNodes.count();
   ctx.state.candidateNodes = total;
@@ -1106,6 +1465,36 @@ async function scanDomAndOrder(page, ctx) {
     let text = await textOf(node, 350);
     if (!text) continue;
 
+    if (isHiddenPriceTargetCardText(text, ctx.config)) {
+      const containers = await findHiddenPriceContainers(node, ctx);
+      for (const container of containers) {
+        const actions = [
+          container.locator.getByRole("button", { name: REVEAL_PRICE_TEXT_RE }),
+          container.locator.getByRole("link", { name: REVEAL_PRICE_TEXT_RE }),
+          container.locator
+            .locator("button, a, [role=button]")
+            .filter({ hasText: REVEAL_PRICE_TEXT_RE }),
+        ];
+        ctx.log(
+          "info",
+          `目标商品价格当前被隐藏，正在点击“查看价格”后继续校验：${compactText(container.text, 220)}`,
+        );
+        if (
+          await clickFirstVisible(
+            page,
+            actions,
+            "reveal target product price",
+            ctx,
+            true,
+          )
+        ) {
+          await waitWithAbort(Math.max(500, ctx.config.postBuyDelayMs), ctx);
+          return false;
+        }
+      }
+      continue;
+    }
+
     if (!isLikelyListProductCardText(text, ctx.config)) continue;
 
     ctx.state.matchedProducts += 1;
@@ -1119,7 +1508,7 @@ async function scanDomAndOrder(page, ctx) {
       continue;
     }
 
-    if (actionState !== "ready" || productUnavailable(text) || !priceMatches(text, ctx.config)) {
+    if (actionState !== "ready" || productUnavailable(text) || (!ctx.config.multiOptionEnabled && !priceMatches(text, ctx.config))) {
       ctx.state.unavailableMatches += 1;
       ctx.log("warn", `命中商品但状态或价格不满足：${compactText(text, 220)}`);
       continue;
@@ -1139,6 +1528,7 @@ async function scanDomAndOrder(page, ctx) {
         )}`,
       );
       if (await findAndClickBuyAction(page, container.locator, ctx, "target product buy button")) {
+        ctx.state.optionsVerified = false;
         await waitWithAbort(ctx.config.postBuyDelayMs, ctx);
         return advanceOrderFlow(page, ctx);
       }
@@ -1275,6 +1665,9 @@ async function runFlashSale(page, ctx, clockOffsetMs) {
       try {
         ordered = await scanDomAndOrder(page, ctx);
       } catch (error) {
+        if (error instanceof GracefulStop) throw error;
+        if (error instanceof AccountVerificationRequired) throw error;
+        if (error instanceof UserAgreementRequired) throw error;
         ctx.log("warn", `扫描异常：${error.message}`);
       }
 
@@ -1314,6 +1707,7 @@ async function runBatchBuy(page, ctx) {
   for (let batch = 1; batch <= config.buyTimes; batch += 1) {
     ctx.assertRunning();
     ctx.log("info", `批次 ${batch}/${config.buyTimes}：打开商品链接`);
+    ctx.state.optionsVerified = false;
     await page.goto(config.productUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await waitWithAbort(500, ctx);
 
@@ -1376,9 +1770,22 @@ export async function runAutomation(rawConfig = {}, hooks = {}) {
     ctx.log("error", `任务失败：${error.stack || error.message}`);
     throw error;
   } finally {
-    if (context && config.closeBrowserOnFinish) {
+    if (context && !config.closeBrowserOnFinish && !hooks.signal?.aborted) {
+      ctx.log("info", "任务结束，浏览器将保留；关闭浏览器窗口或点击“停止”后释放资料目录");
+      while (!hooks.signal?.aborted) {
+        try {
+          if (context.pages().length === 0) break;
+        } catch {
+          break;
+        }
+        await delay(250);
+      }
+    }
+    if (context) {
       await context.close().catch(() => {});
-      ctx.log("info", "浏览器上下文已关闭");
+      if (config.closeBrowserOnFinish || hooks.signal?.aborted) {
+        ctx.log("info", "浏览器上下文已关闭");
+      }
     }
   }
 }

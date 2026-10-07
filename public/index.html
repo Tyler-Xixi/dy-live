@@ -44,7 +44,7 @@
               <input
                 name="liveUrl"
                 type="url"
-                value="https://live.douyin.com/952520575686?anchor_id="
+                value="https://live.douyin.com/749508379274"
                 placeholder="https://live.douyin.com/..."
               />
             </label>
@@ -59,19 +59,19 @@
               <input
                 name="productName"
                 type="text"
-                value="Geil/金邦巨蟹升级款ddr5内存条6000频率台式机内存条"
+                value="[6]手工制品硅胶捏捏玩具，默认微瑕"
                 placeholder="关键词、商品名或 SKU 片段"
               />
             </label>
 
             <label class="field">
               <span>商品编号</span>
-              <input name="productId" type="text" placeholder="可选" />
+              <input name="productId" type="text" value="2" placeholder="可选" />
             </label>
 
             <label class="field">
               <span>目标价格</span>
-              <input name="targetPrice" type="number" min="0" step="0.01" value="799" />
+              <input name="targetPrice" type="number" min="0" step="0.01" value="6" />
             </label>
 
             <label class="field">
@@ -167,12 +167,12 @@
                   <input name="clickTimeoutMs" type="number" min="100" step="50" value="700" />
                 </label>
                 <label class="toggle">
-                  <input type="checkbox" name="strictPriceMatch" />
+                  <input type="checkbox" name="strictPriceMatch" checked />
                   <span>严格匹配价格</span>
                 </label>
                 <label class="toggle">
-                  <input type="checkbox" name="submitPaymentAndAbandon" checked />
-                  <span>提交后放弃支付</span>
+                  <input type="checkbox" name="autoPay" />
+                  <span>自动点击立即支付</span>
                 </label>
                 <label class="toggle">
                   <input type="checkbox" name="allowReservationClick" />

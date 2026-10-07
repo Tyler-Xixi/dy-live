@@ -220,3 +220,41 @@ python -m py_compile dy_grab_gui.py
 
 当前项目未声明许可证。如需开源发布，建议补充 `LICENSE` 文件。
 "# dy-live" 
+
+
+## 2026-10-07 桌面版更新与源码构建
+
+本次在原有项目上增量更新，保留原有 Node.js / Web 控制台和历史文件。以下新增能力主要对应 Python 桌面版（`dy_grab_gui.py`），不代表旧版 Node.js 页面具备完全相同功能。
+
+- 双任务模块：日常秒杀监控、同一商品顺序批量下单。
+- 等待开售时提前锁定目标商品，监听按钮与页面状态变化。
+- 支持配置规格组与选项名称，例如 `补价=12`、`颜色=粉色 | 尺寸=大号`。
+- 支付前再次核对金额，批量按单价乘每单数量校验；金额差异会停止支付。
+- 支付点击不重试，结果不明确时停止后续操作并保留页面；成功计数基于页面成功提示。
+- 优化界面分区、填写提示及参数说明，新增 49 项本地回归测试。
+- 完整操作步骤请阅读 [用户使用说明](用户使用说明.md)，包括学习研究用途与责任声明。
+
+### 私密数据不随源码发布
+
+源码不包含真实卡密、卡密数据库、客户端卡密哈希、激活状态或新的浏览器登录资料。公开源码缺少 `local_license_keys.py` 时不会放行激活，也不会自动生成可用卡密。
+
+管理员首次构建自己的发行版前，先在本地生成自己的卡密：
+
+```powershell
+python card_admin/generate_cards.py --count 100
+python card_admin/export_local_keys.py
+```
+
+首次生成会创建本地 `card_admin/cards.db`、`card_admin/generated_cards.csv` 和 `local_license_keys.py`。不要提交这些私密文件，也不要覆盖或混用原发行版卡密。已有数据库和导出文件时请按 [卡密管理说明](card_admin/README.md) 操作。
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m unittest discover -s tests -v
+python -m PyInstaller --noconfirm dy_live.spec
+```
+
+也可运行 `构建EXE.bat`。浏览器回归测试需要安装 Edge；默认测试启动本地无头浏览器，不会向直播间发送真实订单。卡密测试使用人工测试数据，不依赖真实卡密表。
+
+打包完成后分发整个 `dist/DYLiveAssistant` 文件夹，不能只复制 EXE。构建产物没有直接提交进源码仓库。
+
+> 注意：`.gitignore` 只阻止未跟踪文件被新增，不会移除仓库历史中已提交的浏览器资料或诊断数据。保留原文件不代表其可以安全公开，应单独评估并处理隐私风险。
