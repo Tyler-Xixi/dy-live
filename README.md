@@ -47,7 +47,9 @@
 
 ### 使用已经打包的 Windows 软件
 
-本源码仓库不包含已打包的 EXE 或真实卡密。使用者需要取得管理员提供的完整发行文件夹和卡密。
+前往 [GitHub Releases 下载 Windows 发行版](https://github.com/Tyler-Xixi/dy-live/releases/latest)，或直接下载 [完整 Windows ZIP 包](https://github.com/Tyler-Xixi/dy-live/releases/download/v2026.10.07/DYLiveAssistant-Windows-2026.10.07.zip)。下载后先解压，再启动软件。
+
+完整 ZIP 包包含 EXE、运行依赖和用户手册。发行页也提供单独的 EXE，但它不能脱离 `_internal` 文件夹独立运行，普通用户请下载完整 ZIP。真实卡密不公开上传，需向管理员取得。
 
 ```text
 DYLiveAssistant/
