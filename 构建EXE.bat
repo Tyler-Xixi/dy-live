@@ -34,7 +34,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-copy /Y "启动说明.md" "dist\DYLiveAssistant\使用说明.md" >nul
 copy /Y "用户使用说明.md" "dist\DYLiveAssistant\用户使用说明.md" >nul
 
 echo.

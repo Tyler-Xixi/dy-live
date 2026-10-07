@@ -1,260 +1,218 @@
-# DY 脚本自动化控制台
+# DY Live Assistant · 抖音直播间助手
 
-> 本项目为竞赛学习/自动化流程验证项目，用于将原有 DY 直播间商品脚本封装为可视化 GUI，并保留 Node.js + Playwright 自动化能力。
+面向 Windows 的桌面助手，提供 **秒杀下单** 和 **批量下单** 两个模块，支持指定商品匹配、多规格选择、金额核对及自动点击支付。
 
-## 项目简介
+本仓库以 Python 桌面版为主要入口，保留 Node.js Web / CLI 代码供开发和学习使用。两个实现的功能不完全一致，本文的主要功能说明以桌面版为准。
 
-本项目围绕 dy-live(懂的都懂)商品场景，提供桌面 GUI、Web 控制台和命令行三种运行方式。脚本可以打开直播间、复用浏览器登录态、识别商品列表中的目标商品，并在配置的监控时间点内进行轮询、匹配和下单流程推进。
+> 默认开启“只测试，不下单（DRY_RUN）”。真实运行可能产生订单和扣款；软件不保证抢购成功，也不会绕过实名、支付密码、验证码、扫码或平台风控。
 
-项目默认开启或支持 Dry Run、诊断快照、运行日志等功能，方便在学习和调试阶段观察自动化流程。
+## 核心功能
 
-## 功能特性
+### 秒杀下单：提前等开卖
 
-- 桌面 GUI：基于 Python + Tkinter 的可视化操作界面。
-- Web 控制台：基于 Node.js HTTP 服务和浏览器页面的本地控制台。
-- 抢商品模式：支持直播间链接、商品关键词、商品编号、目标价格和定时监控配置。
-- 批量购买模式：支持现有商品链接、购买数量和购买次数配置。
-- 定时监控：支持最多四个时间点，按窗口进行商品状态轮询。
-- 商品匹配：优先按商品编号匹配，失败时可按关键词和价格兜底匹配。
-- 订单推进：命中购买按钮后继续推进订单流程，可选择提交后放弃支付。
-- 实时日志：GUI 和 Web 控制台均可查看当前脚本运行状态。
-- 诊断输出：可保存页面 HTML、截图、网络命中日志，便于排查问题。
+填写直播间、目标商品、价格和规格后，可以提前启动：
 
-## 技术栈
+- 在直播间商品列表中寻找目标商品。
+- 商品尚未开售时锁定目标卡片，监听按钮和状态变化。
+- 识别到开放购买后重新核对商品，进入下单流程。
+- 支持即时监控和最多四个每日监控时间点。
 
-- Python 3.10+
-- Tkinter
-- Node.js
-- Playwright
-- Chromium
+监听的是浏览器已收到的页面变化，不能提前获取服务器库存，也不保证绝对第一时间抢到商品。
 
-## 目录结构
+### 批量下单：减少重复操作
+
+填写同一商品的详情链接，设置“买几单、每单几件”：
+
+- 每单重新打开商品链接。
+- 按配置选择规格、设置数量并核对金额。
+- 开启自动支付时，确认当前单出现成功提示后才继续下一单。
+- 规格、数量、金额或支付结果不明确时停止后续操作。
+
+这是同一商品、同一规格组合的顺序购买，不是多个不同商品混合下单，也不是并发下单。
+
+### 配套能力
+
+| 功能 | 作用 |
+| --- | --- |
+| 多规格选择 | 预填颜色、尺寸、款式、补价等选项，确认选中后继续 |
+| 严格金额核对 | 支付前再次核对；批量按单价 × 每单数量检查，一分钱差异也停止 |
+| 只测试不下单 | 先检查商品匹配和购买入口，不创建订单 |
+| 登录资料保存 | 专用浏览器保存登录会话，两个模块共用 |
+| 支付结果保护 | 支付点击不重试；结果不明确时停止并保留页面供核对 |
+| 中文界面与日志 | 区分任务、下单方式、规格和高级参数，显示进度与停止原因 |
+
+## 普通用户怎么用
+
+详细操作请先阅读 [用户使用说明](用户使用说明.md)。
+
+### 使用已经打包的 Windows 软件
+
+本源码仓库不包含已打包的 EXE 或真实卡密。使用者需要取得管理员提供的完整发行文件夹和卡密。
 
 ```text
-.
-├── automation_runner.mjs       # Node.js Playwright 核心自动化逻辑
-├── live_room_auto_grab.mjs     # Node.js CLI 入口
-├── gui_server.mjs              # 本地 Web 控制台服务
-├── public/                     # Web 控制台前端页面
-│   ├── index.html
-│   ├── app.css
-│   └── app.js
-├── dy_grab_gui.py              # Python Tkinter 桌面 GUI
-├── requirements-python.txt     # Python 依赖
-├── 启动PythonGUI.bat           # Windows 一键启动脚本
-├── diagnostics/                # 运行诊断产物
-├── live-room-profile/          # Playwright 浏览器登录态/profile
-├── live_room_network_hits.jsonl # 网络命中日志
-├── 需求.md
-└── 交付报告.md
+DYLiveAssistant/
+├── DYLiveAssistant.exe
+├── _internal/
+└── 用户使用说明.md
 ```
 
-> `node_modules/`、`diagnostics/`、`live-room-profile/`、`readonly-check-profile/`、`live_room_network_hits.jsonl` 属于依赖或运行产物，上传 GitHub 前建议加入 `.gitignore`。
+1. 保留整个文件夹，双击 EXE。不要只复制 EXE 或删除 `_internal`。
+2. 首次启动按提示输入管理员提供的卡密。
+3. 点击“登录抖音”，在专用浏览器中完成官方登录，再点击“完成登录并保存”。
+4. 选择“日常秒杀监控”或“批量下单”，填写商品信息。
+5. 保持测试模式开启，检查匹配到的商品是否正确。
+6. 确认账号、商品、规格、价格、数量和地址后，才关闭测试模式。
+7. 需要自动支付时开启“进入结算页后自动点击支付”，阅读确认框后启动。
 
-## 环境要求
+目标电脑需要安装 Microsoft Edge 或 Google Chrome；使用发行版不需要自行安装 Python 或 Node.js。
 
-### Python GUI
+### 价格与规格怎么填
 
-- Windows
-- Python 3.10 或更高版本
-- 可正常安装 Playwright Chromium
-
-### Node.js 版本
-
-- Node.js 18 或更高版本
-- npm
-
-## 安装依赖
-
-### Python 依赖
-
-```powershell
-python -m pip install -r requirements-python.txt
-python -m playwright install chromium
-```
-
-### Node.js 依赖
-
-```powershell
-npm install
-npx playwright install chromium
-```
-
-## 使用方式
-
-### 方式一：启动 Python 桌面 GUI
-
-Windows 下可直接双击：
+- 秒杀模式：目标金额填准确的购买金额，不是最高预算。
+- 批量模式：目标单价填每件价格，程序用单价乘每单数量核对总额。
+- 商品编号：直播间列表序号，不是商品名称中的数字或规格。
+- 多规格：推荐填写 `规格组=选项名称`，不同组用 `|` 分隔。
+- 每个需要选择的规格组都应填写一个选项，不能在同一组同时指定多个值。
 
 ```text
-启动PythonGUI.bat
+单个规格组：补价=12
+多个规格组：颜色=粉色 | 尺寸=大号
+
+批量示例：
+目标单价 12 元，订单数 3，每单数量 2
+每单预期金额 24 元，共 3 单、6 件
 ```
 
-也可以手动运行：
+邮费、优惠或规格变化可能使结算额与配置不符；请先检查实际费用，不要直接关闭金额核对。
+
+### 支付成功怎样判断
+
+“点击购买”“到达结算页”“已点击立即支付”都不等于扣款成功。
+
+自动支付流程最多等待约 15 秒识别页面“支付成功”或“订单支付成功”提示。没有确认时停止后续动作；这不代表一定失败或一定未扣款，应先查抖音订单和支付账单，避免重复购买。
+
+如果需要密码、验证码、扫码或人脸验证，由账号本人在官方页面处理。点击“停止任务”不会撤销已创建订单或已处理的支付。
+
+## 开发者快速开始
+
+### 环境
+
+- Windows。
+- Python 3.10 或更高版本，并能够使用 Tkinter。
+- 桌面版浏览器测试需要 Microsoft Edge。
+- Node.js / npm 仅用于保留的 Web / CLI 实现。
+
+### 获取源码和安装依赖
 
 ```powershell
-python dy_grab_gui.py
+git clone https://github.com/Tyler-Xixi/dy-live.git
+cd dy-live
+python -m pip install -r requirements-build.txt
 ```
 
-首次启动时，批处理脚本会自动安装 Python Playwright 依赖并安装 Chromium。
+依赖版本以 `requirements-python.txt` 和 `requirements-build.txt` 为准。
 
-### 方式二：启动 Web 控制台
+### 本地生成自己的激活卡密
 
-```powershell
-npm run gui
-```
-
-启动后访问：
-
-```text
-http://127.0.0.1:8787
-```
-
-如需修改端口：
-
-```powershell
-$env:PORT=8888
-npm run gui
-```
-
-### 方式三：命令行运行 Node.js 脚本
-
-默认运行：
-
-```powershell
-npm run cli
-```
-
-批量购买模式示例：
-
-```powershell
-$env:MODE="batch"
-$env:PRODUCT_URL="https://example.com/item"
-$env:BUY_QUANTITY="2"
-$env:BUY_TIMES="3"
-npm run cli
-```
-
-## 常用配置
-
-### 抢商品模式
-
-| 配置项 | 说明 |
-| --- | --- |
-| 直播间链接 | DY 直播间 URL |
-| 商品关键词 | 用于匹配商品名称、SKU 或关键词片段 |
-| 商品编号 | 商品列表中的编号，优先级高于关键词 |
-| 目标价格 | 用于价格匹配 |
-| 定时监控 | 最多四个时间点，例如 `10:29:00` |
-| 轮询间隔 | 商品状态扫描间隔，单位 ms |
-| 随机抖动 | 在轮询间隔上增加随机延迟 |
-| Dry Run | 只记录命中动作，不真正点击 |
-| 保存诊断快照 | 保存截图、HTML、网络日志等排查材料 |
-
-### 批量购买模式
-
-| 配置项 | 说明 |
-| --- | --- |
-| 商品链接 | 现有商品页面 URL |
-| 购买数量 | 单次购买数量 |
-| 购买次数 | 批次购买次数 |
-| 下单推进步数 | 进入订单流程后的最大推进次数 |
-
-## Node.js 环境变量
-
-CLI 入口支持通过环境变量覆盖默认配置：
-
-| 环境变量 | 说明 |
-| --- | --- |
-| `MODE` | 运行模式：`flash` 或 `batch` |
-| `LIVE_URL` | 直播间链接 |
-| `PRODUCT_URL` | 商品链接 |
-| `PRODUCT_NAME` | 商品关键词 |
-| `PRODUCT_ID` | 商品编号 |
-| `TARGET_PRICE` | 目标价格 |
-| `DRY_RUN` | 是否 Dry Run，`1/true/on` 表示开启 |
-| `HEADLESS` | 是否无头运行 |
-| `POLL_MS` | 轮询间隔 |
-| `JITTER_MS` | 随机抖动 |
-| `SCHEDULE_WINDOWS` | 监控时间点，逗号分隔 |
-| `BUY_QUANTITY` | 购买数量 |
-| `BUY_TIMES` | 购买次数 |
-| `PROFILE_DIR` | 浏览器 profile 目录 |
-| `DIAGNOSTICS_DIR` | 诊断输出目录 |
-| `CLOSE_BROWSER_ON_FINISH` | 结束后是否关闭浏览器 |
-
-## 验证命令
-
-检查 Node.js 语法：
-
-```powershell
-npm run check
-```
-
-检查 Python 语法：
-
-```powershell
-python -m py_compile dy_grab_gui.py
-```
-
-## 运行产物
-
-项目运行过程中可能生成以下内容：
-
-- `diagnostics/`：页面截图、HTML、JSON 诊断信息。
-- `live-room-profile/`：浏览器登录态和缓存。
-- `readonly-check-profile/`：只读检查用浏览器 profile。
-- `live_room_network_hits.jsonl`：网络请求命中日志，文件可能较大。
-
-这些文件通常不需要提交到 GitHub。
-
-## 注意事项
-
-- 请仅在学习、竞赛、测试或已获授权的环境中使用本项目。
-- 使用自动化脚本前，请确认目标平台规则、账号安全和相关法律法规要求。
-- 建议先开启 Dry Run 观察日志，确认匹配和流程无误后再进行真实操作。
-- 如果提示浏览器 profile 被占用，请关闭旧的自动化 Chromium 窗口后重新启动。
-- 直播间页面结构可能变化，若按钮或商品卡片无法识别，需要根据最新页面更新匹配逻辑。
-
-## 许可证
-
-当前项目未声明许可证。如需开源发布，建议补充 `LICENSE` 文件。
-"# dy-live" 
-
-
-## 2026-10-07 桌面版更新与源码构建
-
-本次在原有项目上增量更新，保留原有 Node.js / Web 控制台和历史文件。以下新增能力主要对应 Python 桌面版（`dy_grab_gui.py`），不代表旧版 Node.js 页面具备完全相同功能。
-
-- 双任务模块：日常秒杀监控、同一商品顺序批量下单。
-- 等待开售时提前锁定目标商品，监听按钮与页面状态变化。
-- 支持配置规格组与选项名称，例如 `补价=12`、`颜色=粉色 | 尺寸=大号`。
-- 支付前再次核对金额，批量按单价乘每单数量校验；金额差异会停止支付。
-- 支付点击不重试，结果不明确时停止后续操作并保留页面；成功计数基于页面成功提示。
-- 优化界面分区、填写提示及参数说明，新增 49 项本地回归测试。
-- 完整操作步骤请阅读 [用户使用说明](用户使用说明.md)，包括学习研究用途与责任声明。
-
-### 私密数据不随源码发布
-
-源码不包含真实卡密、卡密数据库、客户端卡密哈希、激活状态或新的浏览器登录资料。公开源码缺少 `local_license_keys.py` 时不会放行激活，也不会自动生成可用卡密。
-
-管理员首次构建自己的发行版前，先在本地生成自己的卡密：
+公开源码不含 `local_license_keys.py`、卡密 CSV 或卡密数据库。缺少卡密校验模块时激活不会放行，管理员应先生成自己的数据：
 
 ```powershell
 python card_admin/generate_cards.py --count 100
 python card_admin/export_local_keys.py
 ```
 
-首次生成会创建本地 `card_admin/cards.db`、`card_admin/generated_cards.csv` 和 `local_license_keys.py`。不要提交这些私密文件，也不要覆盖或混用原发行版卡密。已有数据库和导出文件时请按 [卡密管理说明](card_admin/README.md) 操作。
+首次生成后，本地会得到：
+
+- `card_admin/generated_cards.csv`：卡密明文，管理员保管。
+- `card_admin/cards.db`：卡密哈希数据库。
+- `local_license_keys.py`：客户端本地校验模块。
+
+**以上文件不要提交到公开仓库。** 生成脚本拒绝覆盖已有导出 CSV；补充新卡密请阅读 [卡密管理说明](card_admin/README.md)，不要覆盖、混用或丢失既有卡密。
+
+当前激活为本地校验，不是全局联网一次性服务；同一卡密可能在不同电脑分别激活。本地 CSV 发放状态需管理员自行记录。
+
+### 运行桌面版
 
 ```powershell
-python -m pip install -r requirements-build.txt
-python -m unittest discover -s tests -v
-python -m PyInstaller --noconfirm dy_live.spec
+python dy_grab_gui.py
 ```
 
-也可运行 `构建EXE.bat`。浏览器回归测试需要安装 Edge；默认测试启动本地无头浏览器，不会向直播间发送真实订单。卡密测试使用人工测试数据，不依赖真实卡密表。
+首次运行仍需使用自己生成的卡密激活，然后进行官方账号登录。
 
-打包完成后分发整个 `dist/DYLiveAssistant` 文件夹，不能只复制 EXE。构建产物没有直接提交进源码仓库。
+也可运行 `启动PythonGUI.bat`；该脚本会检查依赖并尝试安装 Playwright Chromium，需要网络。专用浏览器优先使用已安装的 Edge / Chrome。
 
-> 注意：`.gitignore` 只阻止未跟踪文件被新增，不会移除仓库历史中已提交的浏览器资料或诊断数据。保留原文件不代表其可以安全公开，应单独评估并处理隐私风险。
+### 测试
+
+```powershell
+python -B -m unittest discover -s tests -v
+npm run check
+```
+
+当前测试套件包含 49 项回归测试，覆盖商品匹配、等待开售、多规格、数量与金额校验、图片遮罩、重复支付保护和本地激活等场景。
+
+浏览器测试使用本地模拟页面与无头 Edge；卡密测试使用虚拟测试数据，不依赖管理员真实 CSV，不创建真实订单。测试通过不等于已经验证某个直播间能够实际扣款。
+
+### 打包 Windows EXE
+
+在本地生成自己的卡密校验模块并安装构建依赖后执行：
+
+```powershell
+python -m PyInstaller --noconfirm --clean dy_live.spec
+Copy-Item -LiteralPath "用户使用说明.md" -Destination "dist/DYLiveAssistant/用户使用说明.md" -Force
+```
+
+也可使用 `构建EXE.bat`。输出在 `dist/DYLiveAssistant`，请分发完整文件夹。
+
+发行包中不要夹带卡密管理目录、个人浏览器资料或诊断记录。
+
+## 保留的 Node.js Web / CLI 入口
+
+```powershell
+npm install
+npx playwright install chromium
+npm run gui
+```
+
+命令行入口为 `npm run cli`。这部分代码保留供开发研究使用；桌面版新增的多规格及支付确认保护不应直接视为与 Node.js 版本完全一致。
+
+## 仓库结构
+
+```text
+dy-live/
+├── dy_grab_gui.py             # Python 桌面界面与自动化流程
+├── dy_live.spec               # PyInstaller 打包配置
+├── requirements-python.txt    # Python 运行依赖
+├── requirements-build.txt     # 构建依赖
+├── 启动PythonGUI.bat          # 源码版启动入口
+├── 构建EXE.bat                # 构建入口
+├── 用户使用说明.md            # 完整中文用户手册
+├── card_admin/                # 生成与导出卡密的脚本及说明
+├── tests/                     # 本地回归测试
+├── automation_runner.mjs      # 保留的 Node.js 自动化实现
+├── gui_server.mjs             # 本地 Web 控制台
+├── live_room_auto_grab.mjs     # Node.js CLI 入口
+├── public/                    # Web 页面资源
+├── package.json
+├── package-lock.json
+└── .gitignore
+```
+
+构建产物、缓存、旧发行包、浏览器登录目录、诊断记录、网络响应、真实卡密及激活数据不属于公开源码内容。
+
+## 数据与隐私
+
+EXE 运行数据默认位于 `%LOCALAPPDATA%/DYLiveAssistant`。源码运行或自定义资料目录时，路径以配置为准。
+
+浏览器资料可能包含登录会话；截图、HTML 和网络响应可能包含账号、收货地址或订单信息。反馈问题时只提供必要且已脱敏的资料，不发送卡密、验证码、密码、会话令牌或完整登录目录。
+
+本次整理从 `main` 当前版本移除了旧登录资料、诊断记录与网络压缩包。**普通删除提交不会清除历史中的旧内容。** 若历史内容包含有效登录会话或其他秘密，应停止共享这些资料、检查并撤销相关会话；彻底处理历史暴露需要单独评估，不能把文件删除视为秘密已经失效。
+
+## 学习研究用途与责任声明
+
+本项目主要用于学习研究浏览器自动化、商品状态监测与交互流程测试，不是抖音官方软件，也不代表获得平台自动化授权。
+
+请遵守适用法律、平台规则及账号安全要求，不得用于规避风控、绕过限购、未经授权操作他人账号或其他违法违规行为。
+
+使用者应对其账号、配置、交易授权和实际行为负责。在适用法律允许的范围内，提供者不替他人独立使用、误用或擅自修改软件的后果承担责任；法律要求承担的责任除外。
+
+“仅供学习研究”或“使用者自行负责”不能免除所有法律责任。详细声明及风险说明见 [用户手册末尾](用户使用说明.md#15-学习研究用途与责任声明)。
