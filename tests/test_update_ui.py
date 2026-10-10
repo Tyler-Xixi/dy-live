@@ -39,7 +39,7 @@ class UpdateUITests(unittest.TestCase):
         self.fail('update operation did not complete')
 
     def test_defer_makes_zero_package_requests_and_manual_check_can_reopen(self):
-        with patch('update_ui.UpdateDialog') as dialog:
+        with patch('update_ui.UpdateDialog') as dialog, patch('update_ui.messagebox.showinfo'):
             self.controller.check(); self.pump()
             self.assertEqual(dialog.call_count,1)
             dialog.call_args.kwargs['on_defer']()

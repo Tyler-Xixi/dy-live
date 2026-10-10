@@ -250,6 +250,7 @@ class UpdateClient:
     def incremental_offer(self,manifest,current_version,cancel):
         from update_incremental import parse_incremental_index,parse_incremental_plan
         self._verified_incremental_raw=None
+        self.incremental_reason='增量索引缺失或无适配基线版本'
         if self._verified_raw is None or parse_manifest(self._verified_raw,self.keys,self.state.load()['highest_sequence'])!=manifest:
             raise UpdateError('请重新检查完整更新清单')
         try:
@@ -262,7 +263,10 @@ class UpdateClient:
         plan_raw=self.transport._read(index.plan_path,MAX_MANIFEST_SIZE,cancel,CHECK_TIMEOUT)
         if hashlib.sha256(plan_raw).hexdigest()!=index.plan_sha256: raise UpdateError('增量方案哈希不符')
         plan=parse_incremental_plan(plan_raw,self.keys,self._verified_raw,current_version)
-        if plan.package_size>=manifest.package_size: return None
+        if plan.package_size>=manifest.package_size:
+            self.incremental_reason='增量包不小于完整包'
+            return None
+        self.incremental_reason='签名增量方案已验证'
         self._verified_incremental_raw=plan_raw
         return plan
 

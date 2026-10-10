@@ -11,7 +11,7 @@ from .database import Database
 from .cards import CardService
 from .signing import Signer
 from .auth import AuthService
-from . import public_api, admin_api
+from . import public_api, admin_api, announcements
 
 
 def create_app(settings: ServerSettings, clock=None):
@@ -66,6 +66,7 @@ def create_app(settings: ServerSettings, clock=None):
     @app.get("/health")
     def health(): return {"ok": True}
 
+    app.include_router(announcements.router())
     app.include_router(public_api.router())
     app.include_router(admin_api.router())
     app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")

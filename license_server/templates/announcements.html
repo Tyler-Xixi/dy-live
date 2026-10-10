@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<form id="announcement-publish"><input name="title" required maxlength="200" placeholder="公告标题"><textarea name="content" required maxlength="20000" placeholder="公告内容"></textarea><button type="submit">发布公告</button></form>
+{% for item in items %}<section><p>{{ item.published_at|hkdate }} · {{ '已撤回' if item.withdrawn else '已发布' }}</p>
+<form class="announcement-edit" data-id="{{ item.id }}"><input name="title" value="{{ item.title }}" required maxlength="200"><textarea name="content" required maxlength="20000">{{ item.content }}</textarea><button type="submit">保存编辑</button></form>
+{% if not item.withdrawn %}<button class="announcement-withdraw" data-id="{{ item.id }}">撤回</button>{% endif %}</section>{% endfor %}{% endblock %}

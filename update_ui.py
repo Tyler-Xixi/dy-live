@@ -21,7 +21,7 @@ class UpdateDialog(tk.Toplevel):
         ttk.Label(frame,text=f'{current_version} → {manifest.version}',font=('Microsoft YaHei UI',16,'bold')).pack(anchor='w')
         size=package_plan.package_size if package_plan else manifest.package_size
         kind='增量更新包' if package_plan else '完整更新包'
-        ttk.Label(frame,text=f'{kind} {size/1024/1024:.1f} MB · 更新后重新打开软件',wraplength=430).pack(anchor='w',pady=(8,12))
+        ttk.Label(frame,text=f'{kind} {size/1024/1024:.1f} MB · 完整包 {manifest.package_size/1024/1024:.1f} MB',wraplength=430).pack(anchor='w',pady=(8,12))
         notes=tk.Text(frame,height=6,wrap='word',relief='flat',background='#f4f6fa',font=('Microsoft YaHei UI',10))
         notes.insert('1.0',manifest.notes); notes.configure(state='disabled'); notes.pack(fill='both',expand=True)
         buttons=ttk.Frame(frame); buttons.pack(fill='x',pady=(12,0))
@@ -77,7 +77,17 @@ class UpdateController:
         def work():
             try:
                 manifest=self.client.check(APP_VERSION,self._cancel)
-                plan=self.client.incremental_offer(manifest,APP_VERSION,self._cancel) if manifest else None
+                plan=None
+                if manifest:
+                    try:
+                        plan=self.client.incremental_offer(manifest,APP_VERSION,self._cancel)
+                        reason=getattr(self.client,'incremental_reason','未找到适配增量')
+                    except Exception as exc:
+                        if self._cancel.is_set(): raise
+                        reason='增量检查失败：'+str(exc)
+                    self.client.diagnostics.record('check',{'result':'ok','package_type':'incremental' if plan else 'full','incremental_reason': 'selected' if plan else 'unavailable'})
+                    if not plan:
+                        self._post(lambda reason=reason:messagebox.showinfo('完整包回退',reason+'；保留签名完整包更新。',parent=self.app))
                 self._post(lambda:finished(manifest,plan=plan))
             except Exception as exc: self._post(lambda exc=exc:finished(None,exc))
         threading.Thread(target=work,daemon=True).start()

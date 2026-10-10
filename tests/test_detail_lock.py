@@ -25,6 +25,14 @@ class DetailLockTests(unittest.TestCase):
         # No real profile, credentials, or external service can be reached.
         self.context.route('**/*', lambda route: route.abort())
         self.page = self.context.new_page()
+        original_set_content = self.page.set_content
+        def numbered_content(html, **kwargs):
+            import re
+            html = re.sub(r'<li([^>]*)>([12]) ', lambda m: '<li class="sLOeOa5R"'+m[1]+'><div class="hH83LEu1"><span class="s5ICtQCA">'+m[2]+'</span></div>', html)
+            if '<section' in html and 'sLOeOa5R' not in html:
+                html = '<li class="sLOeOa5R"><div class="hH83LEu1"><span class="s5ICtQCA">1</span></div><span data-e2e="promotion-title">目标玩具</span></li>'+html
+            return original_set_content(html, **kwargs)
+        self.page.set_content = numbered_content
         self.logs = []
         self.events = []
         def record(level, text):
@@ -85,9 +93,9 @@ class DetailLockTests(unittest.TestCase):
         self.assertEqual(self.runner.state['payment_clicks'], 0)
 
     def test_opens_sold_out_product_by_title_before_sale(self):
-        self.page.set_content('''<ul><li>1 <span data-e2e="promotion-title">目标玩具</span>
+        self.page.set_content('''<ul><li class="sLOeOa5R"><div class="hH83LEu1"><span class="s5ICtQCA">1</span></div><span data-e2e="promotion-title">目标玩具</span>
             ¥20 已抢光<button disabled data-e2e="shop-buyBtn">去抢购</button></li></ul>
-            <script>window.opened=0;document.querySelector('span').onclick=()=>{
+            <script>window.opened=0;document.querySelector('[data-e2e="promotion-title"]').onclick=()=>{
               window.opened++;document.body.insertAdjacentHTML('beforeend',
               '<section role="dialog"><h3>目标玩具</h3><p>¥20</p><p>请打开抖音APP扫描二维码 购买此商品</p></section>')};</script>''')
         self.assertFalse(self.runner.scan_dom_and_order(self.page))
@@ -146,12 +154,12 @@ class DetailLockTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('payClicks'), 0)
 
     def test_qr_detail_reopens_via_verified_back_control_not_whole_room_reload(self):
-        self.page.set_content('''<ul><li>1 <span data-e2e="promotion-title">目标玩具</span>
+        self.page.set_content('''<ul><li class="sLOeOa5R"><div class="hH83LEu1"><span class="s5ICtQCA">1</span></div><span data-e2e="promotion-title">目标玩具</span>
             ¥20 已抢光<button disabled>去抢购</button></li></ul>
             <script>window.opened=0;function openDetail(){window.opened++;
               document.body.insertAdjacentHTML('beforeend','<section role="dialog"><h3>目标玩具</h3><p>¥20</p><p>请打开抖音APP扫描二维码 购买此商品</p><button aria-label="返回">返回</button></section>');
               document.querySelector('[aria-label="返回"]').onclick=()=>document.querySelector('section').remove()}
-              document.querySelector('span').onclick=openDetail;openDetail();</script>''')
+              document.querySelector('[data-e2e="promotion-title"]').onclick=openDetail;openDetail();</script>''')
         self.assertFalse(self.runner.scan_dom_and_order(self.page))
         self.runner.detail_refreshed_at = time.monotonic()-3
         self.assertFalse(self.runner.scan_dom_and_order(self.page))
@@ -169,7 +177,7 @@ class DetailLockTests(unittest.TestCase):
         self.assertFalse(self.runner.state.get('order_lock_confirmed', False))
 
     def test_list_restock_reopens_stale_qr_detail_without_waiting_for_timer(self):
-        self.page.set_content('''<ul><li>1 <span data-e2e="promotion-title">目标玩具</span>
+        self.page.set_content('''<ul><li class="sLOeOa5R"><div class="hH83LEu1"><span class="s5ICtQCA">1</span></div><span data-e2e="promotion-title">目标玩具</span>
             ¥20 <span id="list-stock">已抢光</span><button data-e2e="shop-buyBtn" class="Yys40cl5">去抢购</button></li></ul>
             <script>window.opened=0;window.payClicks=0;window.available=false;
             function openDetail(){window.opened++;
@@ -195,9 +203,10 @@ class DetailLockTests(unittest.TestCase):
 
     def test_list_restock_reopens_stale_sold_out_detail_without_false_stop(self):
         self.detail(sold_out=True)
+        self.page.locator('li').evaluate('el=>el.remove()')
         self.page.evaluate('''() => {
           window.opened=1;
-          document.body.insertAdjacentHTML('afterbegin','<ul><li>1 <span data-e2e="promotion-title">目标玩具</span> ¥20 <span id="list-stock">已抢光</span><button data-e2e="shop-buyBtn" disabled>去抢购</button></li></ul>');
+          document.body.insertAdjacentHTML('afterbegin','<ul><li class="sLOeOa5R"><div class="hH83LEu1"><span class="s5ICtQCA">1</span></div><span data-e2e="promotion-title">目标玩具</span> ¥20 <span id="list-stock">已抢光</span><button data-e2e="shop-buyBtn" disabled>去抢购</button></li></ul>');
           document.querySelector('section').insertAdjacentHTML('beforeend','<button aria-label="返回">返回</button>');
           document.querySelector('[aria-label="返回"]').onclick=()=>document.querySelector('section').remove();
           document.querySelector('[data-e2e="promotion-title"]').onclick=()=>{
@@ -461,7 +470,7 @@ class DetailLockTests(unittest.TestCase):
             self.runner.config.diagnostics_dir = folder
             with patch('playwright.sync_api.sync_playwright', return_value=Starter()), \
                  patch.object(app, 'launch_persistent_browser', return_value=self.context), \
-                 patch.object(self.runner, 'calibrate_clock', return_value=0):
+                 patch.object(self.runner, 'calibrate_clock', return_value=0), patch.object(self.runner, 'resolve_number_target', return_value=None):
                 self.runner.run()
         self.assertEqual(retained, [False], '\n'.join(self.logs))
         self.assertTrue(self.page.is_closed())

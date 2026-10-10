@@ -31,6 +31,7 @@ class Database:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript("""
                 BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS announcements (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, published_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, withdrawn INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS cards (
                     id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, digest TEXT UNIQUE NOT NULL,
                     mask TEXT NOT NULL, note TEXT NOT NULL, duration_days INTEGER,

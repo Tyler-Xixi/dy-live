@@ -82,4 +82,11 @@
     try { await post("/admin/cards/"+encodeURIComponent(button.dataset.cardId)+"/"+action, {}); location.reload(); }
     catch (error) { show(error.message); button.disabled=false; }
   }));
+  bindForm("announcement-publish", async (_form,data) => { await post('/admin/announcements',Object.fromEntries(data)); location.reload(); });
+  document.querySelectorAll('.announcement-edit').forEach(form => form.addEventListener('submit',async event => {
+    event.preventDefault(); try { await post('/admin/announcements/'+form.dataset.id+'/edit',Object.fromEntries(new FormData(form))); location.reload(); } catch(error) { show(error.message); }
+  }));
+  document.querySelectorAll('.announcement-withdraw').forEach(button => button.addEventListener('click',async () => {
+    try { await post('/admin/announcements/'+button.dataset.id+'/withdraw',{}); location.reload(); } catch(error) { show(error.message); }
+  }));
 })();

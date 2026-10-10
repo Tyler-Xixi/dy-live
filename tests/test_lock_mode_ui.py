@@ -40,6 +40,25 @@ class LockModeUITests(unittest.TestCase):
         self.assertEqual(self.window.vars['option_names'].get(),'颜色=红色')
         self.assertTrue(self.window.vars['multi_option_enabled'].get())
 
+    def test_number_required_and_name_price_optional_in_all_flash_modes(self):
+        self.window.license_controller=None
+        self.window.vars['product_name'].set('')
+        self.window.vars['target_price'].set('')
+        for number in ('','0','-1','1.5','abc'):
+            self.window.vars['product_id'].set(number)
+            with patch.object(app.messagebox,'showerror') as error:
+                self.window.start_task()
+            self.assertTrue(error.called)
+            if not number:self.assertIn('商品编号必须填写',error.call_args.args[1])
+        self.window.vars['product_id'].set('2')
+        for mode in ('detail_lock_mode','experimental_purchase_click','purchase_speed_priority'):
+            for key in ('detail_lock_mode','experimental_purchase_click','purchase_speed_priority'):self.window.vars[key].set(key==mode)
+            with patch.object(app.messagebox,'showerror') as error,patch.object(app.messagebox,'askyesno',return_value=False) as confirm:
+                self.window.start_task()
+            self.assertFalse(error.called)
+            self.assertTrue(confirm.called)
+            self.assertIsNone(self.window.worker)
+
     def test_labels_and_selected_mode(self):
         texts=self.texts(self.window)
         self.assertIn('普通锁单（提前绑定，开售后提交一次）',texts)

@@ -140,9 +140,18 @@ DETAIL_SNAPSHOT_JS = r"""args => {
     if(matches.length!==1)return {matches:matches.length,panels:panels.length,manualVerification,offline:!navigator.onLine};
     const {root,index}=matches[0];
     const cards=[...document.querySelectorAll('li')];
-    const sameCards=cards.filter(el=>normalize(el.innerText).includes(normalize(args.name))&&
-        (!args.number||new RegExp('^\\s*'+args.number+'(?:\\s|【|\\[)').test(el.innerText||'')));
+    if(args.requireNumber){
+        const titled=cards.filter(el=>el.matches('li.sLOeOa5R')&&normalize(el.querySelector('[data-e2e="promotion-title"]')?.innerText)===normalize(args.name));
+        if(titled.length!==1)return {matches:0,panels:panels.length,manualVerification,offline:!navigator.onLine};
+        const numbered=cards.filter(el=>el.matches('li.sLOeOa5R')&&el.querySelectorAll('.hH83LEu1 > .s5ICtQCA').length===1&&(el.querySelector('.hH83LEu1 > .s5ICtQCA').innerText||'').trim()===String(Number(args.number)));
+        if(numbered.length!==1||numbered[0].querySelectorAll('[data-e2e="promotion-title"]').length!==1)return {matches:0,panels:panels.length,manualVerification,offline:!navigator.onLine};
+    }
+    const sameCards=cards.filter(el=> !args.requireNumber ? normalize(el.innerText).includes(normalize(args.name))&&(!args.number||new RegExp('^\\s*'+args.number+'(?:\\s|【|\\[)').test(el.innerText||'')) : el.matches('li.sLOeOa5R') &&
+        el.querySelectorAll('.hH83LEu1 > .s5ICtQCA').length===1 &&
+        (el.querySelector('.hH83LEu1 > .s5ICtQCA').innerText||'').trim()===String(Number(args.number)) &&
+        normalize(el.querySelector('[data-e2e="promotion-title"]')?.innerText)===normalize(args.name));
     const card=sameCards.length===1?sameCards[0]:null;
+    if(args.requireNumber && !card)return {matches:0,panels:panels.length,manualVerification,offline:!navigator.onLine};
     const buy=card?.querySelector('[data-e2e="shop-buyBtn"]');
     const listUnavailable=!!card&&/售罄|抢光|抢完|缺货|已下架|已结束/.test(card.innerText||'');
     const listReady=!!buy&&!/售罄|抢光|抢完|缺货|已下架|已结束/.test(card.innerText||'')&&
@@ -347,6 +356,8 @@ class ActivationDialog(tk.Tk):
             actions, text="激活并打开软件", command=self.activate, state="disabled"
         )
         self.activate_button.pack(side="left")
+        from announcement_ui import show_announcements
+        ttk.Button(actions,text="公告",command=lambda:show_announcements(self)).pack(side="left",padx=8)
         ttk.Button(actions, text="重新联网校验", command=self.refresh_saved_online).pack(side="left", padx=8)
         ttk.Button(actions, text="退出", command=self.destroy).pack(side="right")
         self.activation_timers.add(self.after(150, self.verify_existing))
@@ -668,6 +679,8 @@ def product_list_index_matches(text: str, config: AutomationConfig) -> bool:
 
 
 def exact_target_price_matches(text: str, config: AutomationConfig) -> bool:
+    if config.mode == 'flash' and (config.multi_option_enabled or config.target_price <= 0):
+        return True
     target_price = float(config.target_price or 0)
     if target_price <= 0:
         return False
@@ -1202,6 +1215,7 @@ class AutomationRunner:
             clock_offset_ms = 0
             if self.config.mode == "flash":
                 clock_offset_ms = self.calibrate_clock()
+                self.resolve_number_target(self.page)
                 self.run_flash_sale(self.page, clock_offset_ms)
             else:
                 self.run_batch_buy(self.page)
@@ -1359,6 +1373,17 @@ class AutomationRunner:
             return True
 
         def do_click() -> bool:
+            if self.config.mode == 'flash' and label in ('open target product detail','locked product buy button','target product buy button','buy/order button'):
+                action_page = getattr(locator, "page", None)
+                if action_page is None:
+                    frame = locator.owner_frame()
+                    action_page = frame.page if frame else None
+                if action_page is None:
+                    raise GracefulStop("点击控件页面归属不明确，停止")
+                cards = self.numbered_cards(action_page)
+                identity = locator.evaluate("""(el,args)=>{const card=el.closest('li.sLOeOa5R');return !!card&&card.querySelectorAll('.hH83LEu1 > .s5ICtQCA').length===1&&(card.querySelector('.s5ICtQCA').innerText||'').trim()===args.number&&card.querySelectorAll('[data-e2e="promotion-title"]').length===1&&(card.querySelector('[data-e2e="promotion-title"]').innerText||'').trim()===args.name;}""", {'number':str(int(self.config.product_id)), 'name':self.config.product_name})
+                if len(cards) != 1 or not identity:
+                    raise GracefulStop('点击前编号卡片归属变化或不唯一，停止')
             option_page = (getattr(locator, 'page', None) if self.config.mode == 'flash'
                            and effective_flash_lock_mode(self.config)!='none' and label.startswith('select product option:') else None)
             if option_page is not None and option_page.evaluate(MANUAL_VERIFICATION_JS):
@@ -2408,7 +2433,7 @@ class AutomationRunner:
 
     def detail_snapshot(self, page):
         data = page.evaluate(DETAIL_SNAPSHOT_JS, {
-            'roots': DETAIL_ROOT_SELECTOR, 'name': self.config.product_name,
+            'roots': DETAIL_ROOT_SELECTOR, 'name': self.config.product_name, 'requireNumber': self.config.mode == 'flash',
             'number': self.config.product_id if str(self.config.product_id).isdigit() else '',
             'payment': PAYMENT_PRIMARY_SELECTOR})
         self.state['detail_status'] = {
@@ -2443,18 +2468,50 @@ class AutomationRunner:
         self.sale_seen = False
         self.log('info', '人工验证提示已消失且目标详情已恢复，继续实时监控；监控区间不延长')
 
+    def numbered_cards(self, page):
+        matches = []
+        for card in page.locator('li.sLOeOa5R').filter(visible=True).all():
+            badge = card.locator('.hH83LEu1 > .s5ICtQCA')
+            title = card.locator('[data-e2e="promotion-title"]')
+            if badge.count() == 1 and title.count() == 1 and badge.inner_text(timeout=300).strip() == str(int(self.config.product_id)):
+                matches.append(card)
+        if len(matches) > 1:
+            raise GracefulStop('商品编号对应多个卡片，停止')
+        return matches
+
+    def resolve_number_target(self, page):
+        if not str(self.config.product_id).isdigit() or int(self.config.product_id) < 1:
+            raise GracefulStop('商品编号必须填写')
+        self.state['retain_browser']=True
+        self.log('info', '阶段：进入直播间，按卡片编号定位')
+        page.goto(self.config.live_url, wait_until='domcontentloaded', timeout=60000)
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            self.assert_running()
+            if page.evaluate(MANUAL_VERIFICATION_JS):
+                self.save_diagnostics(page,'number-manual-verification')
+                self.state['retain_browser']=True
+                raise GracefulStop('需要登录或人工验证，已停止，请人工处理')
+            self.ensure_all_products_panel(page)
+            cards=self.numbered_cards(page)
+            if cards:
+                name=cards[0].locator('[data-e2e="promotion-title"]').inner_text(timeout=300).strip()
+                self.config=replace(self.config,product_name=name,strict_product_match=True)
+                self.log('info', f'编号匹配：{self.config.product_id} → {name}，名称和金额不参与定位')
+                self.save_diagnostics(page,'number-matched')
+                return
+            self.scroll_likely_product_lists(page); self.wait_ms(150)
+        self.save_diagnostics(page,'number-not-found')
+        raise GracefulStop('全部商品中未找到指定编号；请检查登录状态或服务异常')
+
     def open_target_detail(self, page) -> bool:
         """Only open the verified list title; never treat the gray buy label as stock."""
-        if not self.config.product_name or self.config.target_price <= 0:
-            raise GracefulStop('详情页锁单需要完整商品名称和大于0的目标金额')
-        cards = page.locator('li').filter(has_text=self.config.product_name).filter(visible=True)
-        matches = []
-        for card in cards.all():
-            text = card.inner_text(timeout=300)
-            # This mode never uses the legacy same-price/non-strict fallback.
-            strict = replace(self.config, strict_product_match=True, strict_price_match=True)
-            if is_likely_list_product_card_text(text, strict) and exact_target_price_matches(text, strict):
-                matches.append(card)
+        matches = self.numbered_cards(page)
+        if matches:
+            name=matches[0].locator('[data-e2e="promotion-title"]').inner_text(timeout=300).strip()
+            if name != self.config.product_name:
+                raise GracefulStop('目标编号对应商品发生变化，停止')
+            self.log('info', f'阶段：进入编号 {self.config.product_id} 的详情')
         if len(matches) > 1:
             raise GracefulStop('详情页锁单：目标商品不唯一，请核对名称和编号')
         if not matches:
@@ -2490,7 +2547,7 @@ class AutomationRunner:
             fallback=setInterval(check,25);
             timer=setTimeout(finish,100);
             check();
-        })""", {'roots': DETAIL_ROOT_SELECTOR, 'name': self.config.product_name,
+        })""", {'roots': DETAIL_ROOT_SELECTOR, 'name': self.config.product_name, 'requireNumber': self.config.mode == 'flash',
                  'payment': PAYMENT_PRIMARY_SELECTOR, 'index': snapshot.get('index', -1),
                  'number': self.config.product_id if str(self.config.product_id).isdigit() else '',
                  'listIndex': snapshot.get('listIndex', -1),
@@ -2645,7 +2702,8 @@ class AutomationRunner:
             self.pending_order_snapshot(page, capture_existing=True)
             self.detail_entered = True
             self.detail_refreshed_at = time.monotonic()
-            self.log('info', '目标详情已确认：等待网页提交按钮；仅二维码展示不算可下单')
+            self.log('info', f'阶段：目标详情编号 {self.config.product_id} 已核对，等待提交控件')
+            self.save_diagnostics(page,'number-detail-confirmed')
         if data['paymentCount'] > 1:
             raise GracefulStop('详情页支付控件不唯一，未提交订单')
         payment = data.get('payment')
@@ -2711,13 +2769,13 @@ class AutomationRunner:
                 value.pinned=el.isConnected&&value.matches===1&&
                     root?.querySelectorAll(args.payment)[value.payment?.index]===el;
                 return value;
-            }""", {'roots': DETAIL_ROOT_SELECTOR, 'name': self.config.product_name,
+            }""", {'roots': DETAIL_ROOT_SELECTOR, 'name': self.config.product_name, 'requireNumber': self.config.mode == 'flash',
                      'number': self.config.product_id if str(self.config.product_id).isdigit() else '',
                      'payment': PAYMENT_PRIMARY_SELECTOR})
             checked = current.get('payment')
             if current.get('manualVerification') or current.get('verification'):
                 return self.pause_for_manual_verification()
-            if not current.get('pinned'):
+            if not current.get('pinned') or current.get('signature') != data.get('signature'):
                 raise GracefulStop('提交前商品详情或控件身份变化，未点击支付')
             if current.get('offline') or not checked or not checked['safe'] or checked['stockError']:
                 return False
@@ -2725,6 +2783,8 @@ class AutomationRunner:
                     or not exact_target_price_matches(checked['text'], self.config)):
                 raise GracefulStop('提交前金额、数量或控件文字变化，未点击支付')
             # Always a native click; synthetic purchase mode and auto-pay are ignored.
+            self.log('info', f'阶段：编号 {self.config.product_id} 提交前核对完成，仅提交一次')
+            self.save_diagnostics(page,'number-before-submit')
             self.safe_click(action, 'submit payment / create order')
             self.state['payment_clicks'] += 1
             self.state['order_submitted'] = True
@@ -2966,10 +3026,11 @@ class AutomationRunner:
             # Re-evaluate the range to retain its explicit end, including midnight.
 
     def save_diagnostics(self, page, reason: str) -> None:
-        if not self.config.save_diagnostics:
+        critical = reason.startswith('number-') or reason in ('pending-order-unconfirmed','purchase-click-unconfirmed','product-option-not-unique','product-options-missing')
+        if not self.config.save_diagnostics and not critical:
             return
         now = time.time() * 1000
-        if now - self.state["last_diagnostic_at"] < 5000:
+        if not critical and now - self.state["last_diagnostic_at"] < 5000:
             return
         self.state["last_diagnostic_at"] = now
         try:
@@ -3589,7 +3650,7 @@ class App(tk.Tk):
         hints = {
             "live_url": "粘贴直播间地址，例如 https://live.douyin.com/…",
             "product_name": "填写商品名称中的关键文字；至少填写名称或编号一项。",
-            "product_id": "直播间商品列表中的编号，不是规格名称。不确定可以留空。",
+            "product_id": "直播间商品列表中的编号，不是规格名称。必须填写卡片左上角数字。",
             "target_price": "填写想购买的金额（元）；多规格商品填写选中规格的价格。",
             "schedule_windows": "每行填写开始和结束时间，例如 12:00-13:00；支持 23:30-00:20 跨午夜，每段最长一小时。全部留空立即监控。",
             "batch_live_url": "填写直播间链接，从全部商品定位目标。",
@@ -3799,6 +3860,8 @@ class App(tk.Tk):
         ttk.Label(updates,textvariable=self.update_status,style='Hint.TLabel').pack(side='left',padx=8)
         self.update_button=ttk.Button(updates,text='检查更新',style='Quiet.TButton',command=lambda:self.updater.check(manual=True))
         self.update_button.pack(side='left')
+        from announcement_ui import show_announcements
+        ttk.Button(updates,text='公告',command=lambda:show_announcements(self)).pack(side='left',padx=8)
         ttk.Button(updates,text='导出更新诊断',style='Quiet.TButton',command=self.updater.export_diagnostics).pack(side='left',padx=6)
         ttk.Label(header,text="DY 直播间助手",style="Title.TLabel").pack(anchor="w")
         ttk.Label(header,text="① 登录并保存账号    →    ② 选择任务、填写商品    →    ③ 先测试，再开始下单",
@@ -4294,15 +4357,10 @@ class App(tk.Tk):
         if not is_allowed_douyin_url(config.live_url):
             messagebox.showerror("配置错误", "请填写有效的 https://*.douyin.com 直播间或商品链接")
             return
-        if not config.product_name and not config.product_id:
-            messagebox.showerror("配置错误", "请至少填写商品关键词或商品编号")
-            return
-        if config.strict_price_match and config.target_price <= 0:
-            messagebox.showerror("配置错误", "严格价格匹配时必须填写目标价格")
-            return
-        if effective_flash_lock_mode(config) != 'none' and (not config.product_name or config.target_price <= 0):
-            messagebox.showerror('配置错误', '秒杀锁单需要填写完整商品名称和大于0的目标金额')
-            return
+        if config.mode == 'flash' and not config.product_id:
+            messagebox.showerror('配置错误', '商品编号必须填写'); return
+        if config.mode == 'flash' and (not config.product_id.isdigit() or int(config.product_id) < 1):
+            messagebox.showerror('配置错误', '商品编号必须为正整数'); return
         if config.multi_option_enabled:
             try:
                 if not parse_product_options(config.option_names):

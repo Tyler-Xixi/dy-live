@@ -15,6 +15,18 @@ class StagingTests(unittest.TestCase):
     tearDown=incremental_fixture.IncrementalTests.tearDown
     build=incremental_fixture.IncrementalTests.build
     plan=incremental_fixture.IncrementalTests.plan
+    def test_target_inventory_rejects_missing_and_extra_files(self):
+        from update_incremental import parse_incremental_plan,assemble_incremental,validate_target_directory
+        package,payload,raw=self.plan()
+        plan=parse_incremental_plan(raw,self.keys,self.raw,'6.1.2')
+        target=parse_manifest(self.raw,self.keys);stage=self.root/'inventory-stage'
+        assemble_incremental(plan,target,self.base,package,stage,threading.Event())
+        extra=stage/'_internal/extra.dll';extra.write_bytes(b'bad')
+        with self.assertRaises(UpdateError):validate_target_directory(stage,target)
+        extra.unlink()
+        (stage/target.files[0].path).unlink()
+        with self.assertRaises(UpdateError):validate_target_directory(stage,target)
+
     def test_complete_stage_uses_old_runtime_and_omits_removed_files(self):
         from update_incremental import parse_incremental_plan,assemble_incremental,validate_target_directory
         package,payload,raw=self.plan()

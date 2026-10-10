@@ -13,7 +13,7 @@ from update_protocol import assert_plain_path, strict_json, UpdateError
 
 STAGES={'check','confirm','preflight','download','verify','assemble','handoff',
         'wait_exit','backup','replace','startup','commit','recovery','failed','cancelled'}
-ENUMS={'package_type':{'full','incremental'},
+ENUMS={'incremental_reason':{'selected','unavailable'},'package_type':{'full','incremental'},
        'category':{'network','signature','hash','baseline','space','permission','process',
                    'file_lock','handoff','replace','startup','recovery','unknown'},
        'result':{'started','ok','failed','cancelled','committed','restored','awaiting_manual_close'}}
