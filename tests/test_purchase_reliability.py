@@ -8,7 +8,7 @@ import dy_grab_gui as app
 
 class PurchaseReliabilityTests(unittest.TestCase):
     def test_strict_product_match_rejects_wrong_number_at_same_price(self):
-        config=app.AutomationConfig(product_name='目标玩具',product_id='1',target_price=20)
+        config=app.AutomationConfig(product_name='目标玩具',product_id='1',target_price=20,strict_product_match=True)
         self.assertFalse(app.is_likely_list_product_card_text('2 目标玩具 ¥20 去抢购',config))
         config.strict_product_match=False
         self.assertTrue(app.is_likely_list_product_card_text('2 目标玩具 ¥20 去抢购',config))

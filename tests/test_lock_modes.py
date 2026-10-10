@@ -102,7 +102,7 @@ class LockModesTests(unittest.TestCase):
                   document.body.innerHTML='<section role="dialog"><h3>目标玩具</h3><p>购买数量 1</p><p>订单留言</p><div class="iHAKgO8B" style="width:300px;height:50px">支付 ¥20.00</div></section>';
                   document.querySelector('.iHAKgO8B').onclick=e=>{
                     window.payClicks++;window.trusted=e.isTrusted;
-                    document.querySelector('section').innerHTML='<h3>待付款</h3><p>订单号：SIM123456789</p>';
+                    document.querySelector('section').innerHTML='<h3>待付款</h3><p>商品名称：目标玩具</p><p>购买数量：1</p><p>规格：默认单一规格</p><p>订单号：SIM123456789</p>';
                   };
                 };</script>''')
                 started=time.monotonic()

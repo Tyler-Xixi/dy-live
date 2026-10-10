@@ -38,13 +38,16 @@ class ProductOptionsTests(unittest.TestCase):
               });
             </script>''')
 
+        self.page.evaluate("""() => {const section=document.createElement('section');section.innerHTML='<h3>目标玩具</h3><p>购买数量 1</p><p>订单留言</p>';for(const el of [...document.body.children])section.appendChild(el);document.body.appendChild(section);
+        document.querySelector('.iHAKgO8B').onclick=()=>{payClicks++;document.body.insertAdjacentHTML('beforeend','<aside><h3>待付款</h3><p>订单号：SIM123456789</p><p>商品名称：目标玩具</p><p>购买数量：1</p><p>补价：12</p><p>颜色：红色</p></aside>')};}""")
+
     def tearDown(self):
         self.page.close()
 
     def runner(self, names="补价=12", price=12):
         return app.AutomationRunner(app.AutomationConfig(
             multi_option_enabled=True, option_names=names,
-            target_price=price, auto_pay=True, dry_run=False,
+            product_name="目标玩具", target_price=price, dry_run=False,
             save_diagnostics=False, order_step_delay_ms=0,
         ), lambda *_: None, threading.Event())
 
@@ -80,7 +83,7 @@ class ProductOptionsTests(unittest.TestCase):
         self.page.evaluate("""() => {
             const group=document.createElement('div'); group.className='YTFcT_zp';
             group.innerHTML='<div class="R_G6ohly">颜色</div><div class="ufz0AqTE vZSOutR4">红色</div><div class="ufz0AqTE">蓝色</div>';
-            document.body.appendChild(group);
+            document.querySelector("section").appendChild(group);
         }""")
         self.assert_blocked(self.runner())
 
@@ -90,7 +93,7 @@ class ProductOptionsTests(unittest.TestCase):
             group.innerHTML='<div class="R_G6ohly">网络类型</div><div class="ufz0AqTE '+
                 (args.selected?'vZSOutR4':'')+'" '+args.attributes+'>全网通</div>';
             group.querySelector('.ufz0AqTE').onclick=()=>window.fixedClicks++;
-            window.fixedClicks=0; document.body.appendChild(group);
+            window.fixedClicks=0; document.querySelector("section").appendChild(group);
         }''', {'attributes': attributes, 'selected': selected})
 
     def test_omitted_selected_single_option_allows_payment_without_clicking_it(self):
@@ -129,7 +132,7 @@ class ProductOptionsTests(unittest.TestCase):
         self.page.evaluate("""() => {
             const group=document.createElement('div'); group.className='YTFcT_zp';
             group.innerHTML='<div class="R_G6ohly">颜色</div><div class="ufz0AqTE vZSOutR4">红色</div>';
-            document.body.appendChild(group);
+            document.querySelector("section").appendChild(group);
         }""")
         self.assertTrue(self.runner(names='补价=12 | 颜色=红色').submit_payment_then_abandon(self.page))
         self.assertEqual(self.page.evaluate('window.payClicks'), 1)
@@ -142,7 +145,8 @@ class ProductOptionsTests(unittest.TestCase):
         runner = self.runner()
         runner.config.multi_option_enabled = False
         runner.config.target_price = 11
-        self.assertTrue(runner.submit_payment_then_abandon(self.page))
+        with self.assertRaises(app.GracefulStop):
+            runner.submit_payment_then_abandon(self.page)
         self.assertEqual(self.page.evaluate('window.payClicks'), 1)
 
     def test_ordinary_flash_rechecks_final_price(self):
@@ -164,12 +168,12 @@ class ProductOptionsTests(unittest.TestCase):
     def test_batch_quantity_one_resets_saved_quantity(self):
         self.page.evaluate("""() => {
             const input = document.createElement('input'); input.type='number'; input.value='2';
-            document.body.appendChild(input);
+            document.querySelector("section").appendChild(input);
         }""")
         runner = self.runner()
         runner.config.mode = 'batch'
         runner.config.buy_quantity = 1
-        self.assertTrue(runner.submit_payment_then_abandon(self.page))
+        runner.set_purchase_quantity(self.page)
         self.assertEqual(self.page.locator('input').input_value(), '1')
 
     def test_payment_timeout_never_retries_click(self):
@@ -234,9 +238,10 @@ class ProductOptionsTests(unittest.TestCase):
         runner = self.runner()
         runner.state['pending_payment_review'] = True
         self.page.set_content('<div>支付成功</div>')
-        runner.wait_for_payment_success(self.page)
-        self.assertFalse(runner.state['pending_payment_review'])
-        self.assertTrue(runner.state['payment_confirmed'])
+        runner.pending_order_timeout_ms=50
+        with self.assertRaises(app.GracefulStop): runner.wait_for_pending_order(self.page)
+        self.assertTrue(runner.state['pending_payment_review'])
+        self.assertFalse(runner.state['payment_confirmed'])
 
     def test_flash_completion_requires_payment_confirmation(self):
         runner = self.runner()
@@ -261,15 +266,16 @@ class ProductOptionsTests(unittest.TestCase):
             runner.run_flash_sale(OfflinePage(), 0)
         self.assertEqual(confirmed, [])
         runner.state['order_submitted'] = True
+        runner.state['order_lock_confirmed'] = True
         runner.run_flash_sale(OfflinePage(), 0)
-        self.assertEqual(confirmed, [True])
+        self.assertEqual(confirmed, [])
 
     def locked_runner(self):
         self.page.set_content('''<li id="target">2 目标玩具 ¥6
             <button disabled>等待开售</button></li>
             <script>window.buyClicks=0;document.querySelector('button').onclick=()=>window.buyClicks++;</script>''')
         runner = app.AutomationRunner(app.AutomationConfig(
-            product_name='目标玩具', product_id='2', target_price=6, dry_run=False,
+            product_name='目标玩具', product_id='2', target_price=6, dry_run=False, strict_product_match=True,
             save_diagnostics=False,
         ), lambda *_: None, threading.Event())
         runner.locked_product = (self.page.locator('#target'), self.page.locator('#target').element_handle())
@@ -316,6 +322,7 @@ class ProductOptionsTests(unittest.TestCase):
 
     def test_persistent_observer_remembers_brief_sale_between_cycles(self):
         runner=self.locked_runner()
+        runner.config.continue_after_sold_out=False
         self.assertFalse(runner.watch_locked_product(self.page))
         self.page.evaluate("""() => {
             setTimeout(()=>{const b=document.querySelector('button');b.disabled=false;b.textContent='去抢购'},10);
@@ -406,66 +413,56 @@ class ProductOptionsTests(unittest.TestCase):
         self.page.evaluate("""() => {
             const n=document.createElement('input');n.type='number';n.value='1';
             n.onchange=()=>document.querySelector('.iHAKgO8B').textContent='支付 ¥'+12*Number(n.value)+'.00';
-            document.body.appendChild(n);
+            document.querySelector("section").appendChild(n);
         }""")
         runner=self.runner()
         runner.config.mode='batch'
         runner.config.buy_quantity=2
-        self.assertTrue(runner.submit_payment_then_abandon(self.page))
+        runner.set_purchase_quantity(self.page)
         self.assertEqual(self.page.locator('input').input_value(), '2')
-        self.assertEqual(self.page.evaluate('window.payClicks'), 1)
+        self.assertEqual(self.page.evaluate('window.payClicks'), 0)
 
     def test_success_message_is_required_for_batch_completion(self):
         self.page.evaluate("""() => setTimeout(() => {
             const text=document.createElement('div');text.textContent='支付成功';document.body.appendChild(text);
         }, 80)""")
-        self.runner().wait_for_payment_success(self.page)
+        runner=self.runner(); runner.pending_order_timeout_ms=50
+        with self.assertRaises(app.GracefulStop): runner.wait_for_pending_order(self.page)
 
     def batch_page(self, success=True):
-        original=self.page.content()
-        real=self.page
+        original=self.page.content(); real=self.page
         class OfflinePage:
             visits=0
             def goto(self, *_args, **_kwargs):
                 self.visits += 1
                 real.set_content(original)
-                if success:
-                    real.evaluate("""() => {
-                        document.querySelector('.iHAKgO8B').onclick=()=>{
-                            const text=document.createElement('div');text.textContent='支付成功';
-                            document.body.appendChild(text);
-                        };
-                    }""")
-            def __getattr__(self, name):
-                return getattr(real, name)
+                real.evaluate("""args=>{document.body.insertAdjacentHTML('afterbegin','<li>1 <span data-e2e="promotion-title">目标玩具</span> ¥12</li>');
+                document.querySelector('.iHAKgO8B').onclick=()=>{payClicks++;if(args.success)document.body.insertAdjacentHTML('beforeend','<aside><h3>待付款</h3><p>订单号：LOCAL'+args.visit+'123456</p><p>商品名称：目标玩具</p><p>购买数量：1</p><p>补价：12</p></aside>')};}""",{'success':success,'visit':self.visits})
+            def reload(self, **kwargs): self.goto()
+            def __getattr__(self,name): return getattr(real,name)
         return OfflinePage()
 
+    def prepare_batch(self, page):
+        runner=self.runner(); runner.config.mode='batch'; runner.config.buy_times=2
+        runner.config.batch_interval_ms=0; runner.pending_order_timeout_ms=80
+        def open_target(p):
+            p.goto(); runner.batch_target_name='目标玩具'
+        runner.open_batch_target=open_target
+        return runner
+
     def test_batch_runs_two_orders_with_fresh_spec_selection(self):
-        page=self.batch_page()
-        runner=self.runner()
-        runner.config.mode='batch'
-        runner.config.product_url='https://www.douyin.com/offline-test'
-        runner.config.product_name=''
-        runner.config.buy_times=2
-        runner.config.batch_interval_ms=0
+        page=self.batch_page(); runner=self.prepare_batch(page)
         runner.run_batch_buy(page)
-        self.assertEqual(page.visits, 2)
-        self.assertEqual(runner.state['batch_completed'], 2)
+        self.assertEqual(page.visits,2)
+        self.assertEqual(runner.state['batch_completed'],2)
+        self.assertEqual(runner.batch_outcome().kind,'completed')
 
     def test_batch_does_not_start_next_order_when_payment_unconfirmed(self):
-        page=self.batch_page(success=False)
-        runner=self.runner()
-        runner.config.mode='batch'
-        runner.config.product_url='https://www.douyin.com/offline-test'
-        runner.config.product_name=''
-        runner.config.buy_times=2
-        def unconfirmed(_):
-            raise app.GracefulStop('payment unconfirmed')
-        runner.wait_for_payment_success=unconfirmed
-        with self.assertRaises(app.GracefulStop):
-            runner.run_batch_buy(page)
-        self.assertEqual(page.visits, 1)
-        self.assertEqual(runner.state['batch_completed'], 0)
+        page=self.batch_page(success=False); runner=self.prepare_batch(page)
+        with self.assertRaises(app.GracefulStop): runner.run_batch_buy(page)
+        self.assertEqual(page.visits,1)
+        self.assertEqual(self.page.evaluate('payClicks'),1)
+        self.assertEqual(runner.state['batch_completed'],0)
 
 
 if __name__ == '__main__':

@@ -2618,6 +2618,7 @@ class AutomationRunner:
             raise GracefulStop('提交结果需要人工核对，禁止重新购买')
         if time.time()*1000 >= self.monitor_deadline_ms:
             return False
+        self.install_product_image_viewer_guard(page)
         data = self.detail_snapshot(page)
         if data.get('manualVerification') or data.get('verification'):
             return self.pause_for_manual_verification()
@@ -2666,7 +2667,7 @@ class AutomationRunner:
                 raise GracefulStop('详情页控件文字不是支付动作，未点击')
             if data['quantity'] != 1:
                 raise GracefulStop('详情页锁单只允许一件，未确认数量为1，未提交订单')
-            if not exact_target_price_matches(payment['text'], self.config):
+            if not self.config.multi_option_enabled and not exact_target_price_matches(payment['text'], self.config):
                 # A transient zero while price hydrates is not an available order.
                 if re.search(r'[¥￥]\s*0(?:\.0+)?\s*$', payment['text']):
                     self.wait_for_detail_update(page, data)
@@ -2681,6 +2682,13 @@ class AutomationRunner:
                 payment = data.get('payment')
                 if data['matches'] != 1 or not payment or not payment['safe'] or payment['stockError']:
                     return False
+                price_deadline = time.monotonic() + 2
+                while not exact_target_price_matches(payment['text'], self.config) and time.monotonic() < price_deadline:
+                    self.wait_for_detail_update(page, data)
+                    data = self.detail_snapshot(page)
+                    payment = data.get('payment')
+                    if data.get('matches') != 1 or not payment or not payment['safe'] or data.get('manualVerification'):
+                        raise GracefulStop('规格选择后详情状态不明确，未提交')
                 if data['quantity'] != 1 or not exact_target_price_matches(payment['text'], self.config):
                     raise GracefulStop('选择规格后金额或数量变化，未提交订单')
             if self.config.dry_run:
