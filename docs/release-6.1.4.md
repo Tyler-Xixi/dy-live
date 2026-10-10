@@ -1,4 +1,8 @@
-# 6.1.4 candidate — publication held
+# 6.1.4 release record
+
+Final status: released, sequence 6. See the Final production release section below.
+
+## Historical RC1 — publication held
 
 2026-10-10: clean main EXE and independent updater built; embedded version 6.1.4, sequence 5. No production manifest switch. Server latest remains signed 6.1.3 sequence 4. Candidate tag is v6.1.4-rc.1; it is not a released production version.
 
@@ -80,3 +84,58 @@ Old server backup rechecked: round-6.1.4/latest.json SHA256 516f7d458c22c7a9efc9
 Git source rollback for only the follow-up changes: git revert --no-edit v6.1.4-rc.2; git push origin main. This returns to rc1 source, which lacks the two fixes; assess before distributing. For client repair use a version above 6.1.4 and sequence above 6 (for example 6.1.5/7 if no intervening release). Old manifest restoration still does not downgrade installed clients, and clients that saw sequence 6 may reject sequence 4.
 
 Production switch and remote Git verification are pending at the time of this RC2 source commit. Final publication record will supersede this status.
+
+## Final production release — 2026-10-10 (Hong Kong)
+
+Production is 6.1.4, sequence 6. The earlier held/failed rc1 sections above are retained as historical evidence, superseded by the Follow-up, RC2, and final verification. RC1 binaries must not be distributed.
+
+Source commit: fb4ce4c1496211ddee8550ecdfaf43aeee096f63. Remote main and peeled v6.1.4-rc.2 were independently checked against that SHA after successful atomic push. v6.1.4-rc.1 is also preserved and pushed without replacement. Final documentation is committed separately and tagged v6.1.4; inspect its commit with `git rev-parse v6.1.4^{}`. No credentials, private signing keys, login data, logs or build artifacts were committed. Git network retries used the already-configured local mixed-port proxy as a per-command option, without changing system proxy settings.
+
+Local final dist was replaced with the existing publish_dist.ps1 flow: 2657 managed files verified; all original dist contents retained at build/release-backups/manual-update-20261010-185751-091/dist. Final dist EXE starts with isolated authorization, correct title and graceful exit. Complete distribution: dist/DYLiveAssistant6.1.4.zip (same final ZIP hash stated in the RC2 section). Build/work/package outputs remain under build/release-6.1.4/rc2. New EXE embedded icon resources: all five frames exactly match assets/app.ico. Computer Use confirmed the restarted rc2 shared-spec switch and exact three-group text restored; restored-spec.png saved before graceful shutdown.
+
+Publication used the unchanged server tools.update_publish implementation (its SHA256 compared with the local tool), official server-only signer and publication lock. A one-run wrapper intercepted only the final atomic_json call: it verified the target matched the accepted private signature, checked the old latest SHA, downloaded the now-versioned public ZIP over HTTPS with exact byte-count/hash validation, checked the old latest again, then allowed the normal atomic manifest write. Failure before that write would retain the old latest. Server pre-switch download: 68,748,282 bytes, SHA256 bc651ff4221a647c9f9098f438fad8d77c10f0d6804a6efbbff8326896096d06. No server publisher or Nginx configuration was replaced. Local wrapper evidence is rc2/publish-verified-server.py and publish.log; incoming rc1 remains intact.
+
+Independent workstation public download: PASS, 68,748,282 bytes in 343.75 seconds; exact package hash, official signature and every archived file verified. ZIP response is immutable; public latest signature is identical to the private accepted candidate. Public UpdateClient using temporary data: 6.1.3 offers 6.1.4 sequence 6, and 6.1.4 returns current/latest. License health and both blog domains returned 200. Evidence: rc2/public-download.json, public-download.zip, public-latest.json, client-check.json, verification.json. Public URL: https://license.txblog.cn/updates/releases/6.1.4/DYLiveAssistant-6.1.4-windows-x64.zip.
+
+Actual fresh tests: 141 targeted automated tests PASS; one new frozen UI defaults/save/restart scenario PASS; one real old-to-new updater installation/preservation scenario PASS; final-dist startup/exit PASS; source/embedded-icon/signature/archive/hash checks PASS. These do not validate real-platform ordering or payment, and no full suite was run. Browser preservation used synthetic files and directories, not a real logged-in profile session. Same-host pre-switch download and independent workstation download are separate evidence; elapsed download time is not a speed guarantee.
+
+### Executable recovery procedure
+
+Git follow-up source rollback (existing checkout, preserve current commit first; review before deployment):
+```powershell
+git -C build/release-6.1.4/git-checkout revert --no-edit fb4ce4c1496211ddee8550ecdfaf43aeee096f63
+git -C build/release-6.1.4/git-checkout -c http.proxy=http://127.0.0.1:7890 push origin main
+```
+This returns the two follow-up fixes/tests to rc1; it does not reconstruct online 6.1.3 source. The original Git baseline also predates 6.1.3. Keep source snapshots/bundles and assess the intended recovery source. No force push. A source revert does not replace server binaries or client installations.
+
+Server index withdrawal/restore (existing authenticated SSH session; uses the same publication lock, verifies the official old signature, hashes and archive, and saves a unique copy of the current index):
+```bash
+cd /opt/dy-updates/tools
+python3 - <<'PY'
+from pathlib import Path
+import hashlib, json, shutil, uuid
+from tools.update_publish import publish_lock
+from update_client import atomic_json
+from update_protocol import parse_manifest, validate_archive
+from update_config import UPDATE_PUBLIC_KEYS
+public = Path('/opt/dy-updates/public')
+backup = Path('/opt/dy-updates/release-backups/round-6.1.4')
+with publish_lock(Path('/opt/dy-updates/secrets')):
+    old = (backup / 'latest.json').read_bytes()
+    assert hashlib.sha256(old).hexdigest() == '516f7d458c22c7a9efc9cdd714c4df111e9e791e7b8798b7f50e62b81c949806'
+    manifest = parse_manifest(old, UPDATE_PUBLIC_KEYS)
+    assert (manifest.version, manifest.sequence) == ('6.1.3', 4)
+    validate_archive(backup / 'DYLiveAssistant-6.1.3-windows-x64.zip', manifest)
+    current = parse_manifest((public / 'stable/latest.json').read_bytes(), UPDATE_PUBLIC_KEYS)
+    assert (current.version, current.sequence) == ('6.1.4', 6), 'Inspect unexpected current release before rollback'
+    shutil.copy2(public / 'stable/latest.json', backup / ('before-rollback-' + uuid.uuid4().hex + '.json'))
+    atomic_json(public / 'stable/latest.json', json.loads(old))
+PY
+```
+Keep all immutable release directories. No new incremental index was published; the pre-existing 6.1.3 incremental index was not changed. Verify public latest after rollback. Clients that already saw sequence 6 may reject sequence 4, so index rollback is withdrawal for eligible older clients, not automatic recovery for updated ones.
+
+Client manual restore: close the running app normally; verify old ZIP SHA256 90f19a0adbf406f5649d8735b8dae37e56f22c621f89c746fd1f324e4258f355; extract the complete old package into a new empty folder, retain the newer installation and %LOCALAPPDATA%/DYLiveAssistant plus absolute browser-profile paths. Example extraction in the project workspace:
+```powershell
+python -m zipfile -e build/release-backups/manual-update-20261010-185751-091/dist/DYLiveAssistant6.1.3.zip build/recovery-6.1.3
+```
+The command uses the locally preserved old package; verify its hash first, or use the verified server backup package. Never overwrite a nonempty recovery directory. Old-client/new-preference compatibility needs verification before relying on this manual recovery. The preferred fleet repair uses known-good reviewed source and a version/sequence above every seen value: 6.1.5/7 if no later release exists. Rebuild, sign and revalidate it. Do not delete update_state.json or bypass downgrade protection.
