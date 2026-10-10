@@ -1,4 +1,30 @@
-# 6.1.5 candidate — publication blocked
+# 6.1.5 release acceptance
+
+Status before final manifest switch: 6.1.5 sequence 7, formal publication pending. The historical hold below has been superseded by the user's explicit request to publish and defer stronger detail identity association. No existing safety guards were removed. Unique-card/title detail association remains a known limitation; real platform orders/payments are not verified.
+
+Build source is candidate commit 240d989e9703e678e25aea1f375d69badcd77aab. GUI and nine embedded application/update/announcement/batch modules were compared against current source bytecode, and current source matches the trusted Git checkout. Main/helper/full ZIP hashes below remain unchanged. Signed incremental 6.1.4-to-6.1.5 ZIP SHA256 aa4516beec680b35635b5e08cd69ca9c2dc470c724d87c438fa8452f636dae24, 18,186,938 bytes; full ZIP 68,756,789 bytes. Official server signing keys stayed on the server. Full and incremental private signed targets are identical.
+
+Resumed verification:
+- Explicit 132-test run initially had four subtest failures in one multi-account test (zero observed simulated requests); failure log targeted-final.log retained. Diagnostic rerun observed exactly one request for each wrong/missing evidence case, zero successful orders, preserved browser and no retry. Isolated module recheck: 5 PASS. Final full explicit related module recheck: 132 PASS in 88.197s, targeted-resume-recheck.log. The fixture uses a short 100ms pending timeout; initial failure was not reproduced. No assertion or production timeout was weakened.
+- Eight AST parses PASS; embedded GUI bytecode, nine modules and all five EXE ICO frames verified. Frozen title, tabs, shared SKU placement/copy example, new defaults, saved strict-price choice, SKU save/restart and shared batch display were visually checked. No task was started. User pressed Escape during final desktop close; no further Computer Use inputs were issued. Frozen announcement entry opened, but its complete reload/offline/admin UI coverage is not claimed.
+- Actual signed current public 6.1.4 ZIP was validated/extracted as baseline. Both real full and real incremental helper upgrades committed and new EXE acknowledged startup. Managed roots match candidate exactly; user preference, external browser profile sentinel and unknown install file preserved. Incremental signature/index/plan hash/assembly/full target inventory PASS; modified and extra files rejected. First incremental harness used protocol 1 and was rejected before ready; corrected harness protocol 2 PASS. Source tests cover cancellation/space/recovery; no separate frozen cancellation/fault injection run is claimed.
+- Original Docker build dependency download timed out, without modifying production. Existing backup image dependency versions exactly match all eight pinned requirements; fresh source was layered on that verified image as dy-license:candidate-6.1.5-reuse. Five announcement tests PASS inside this isolated image with network disabled. Actual old database COPY migration, integrity, all existing row counts, public API and rejected anonymous writes PASS. No synthetic announcement was published live.
+- Service deployed from the accepted image; public /health and /api/v1/announcements 200, anonymous announcement POST 403. Nginx -t PASS; existing active configuration already accepts the exact full/delta/plan paths, so no Nginx edit or reload was necessary. Main signed index remains 6.1.4 until final publication below is separately confirmed.
+
+Fresh predeployment backups: /opt/dy-updates/release-backups/round-6.1.5/resume-predeploy.sqlite3 SHA256 3019e419880ffac068298b8b2aed60906571481bd3bf8587890728104d8d5001, resume-predeploy-source-config.tgz SHA256 593688f08e57b80d2a18765e768f10f1faf6165a0bbe617620f65d8400425cdf; update-tools-before.tgz and image dy-license:backup-6.1.5 retained. Old public 6.1.4 resources retained. Existing source-before.zip and before/after Git bundles remain recoverable.
+
+Service rollback commands on the verified host, if required:
+```sh
+tar -xzf /opt/dy-updates/release-backups/round-6.1.5/resume-predeploy-source-config.tgz -C /opt/dy-license
+docker tag dy-license:backup-6.1.5 dy-license:local
+docker compose -f /opt/dy-license/license_server/compose.yaml up -d --no-build --force-recreate license-api
+docker exec blog-frontend nginx -t
+```
+The migration is additive; retain live database by default to avoid losing later admin/license writes. Database restore requires stopping license-api, preserving current database and WAL/SHM in a new directory, restoring the validated snapshot with owner 10001:10001, then starting the matching old image. Never blindly overwrite a writing database. A publication-specific atomic signed-index rollback script will be recorded after the switch; source Git revert and public-index withdrawal do not downgrade already updated clients. Forward repair must use a higher version and sequence, with 6.1.6/8 available only if still above all intervening releases.
+
+---
+
+# Initial candidate hold — historical record
 
 Current online signed state was freshly verified as 6.1.4 sequence 6, package SHA256 bc651ff4221a647c9f9098f438fad8d77c10f0d6804a6efbbff8326896096d06. No public/incoming 6.1.5 existed at inspection. Candidate metadata is 6.1.5 sequence 7; final v6.1.5 tag is reserved until all acceptance gates pass. This is not a formal release.
 
