@@ -22,6 +22,18 @@ docker exec blog-frontend nginx -t
 ```
 The migration is additive; retain live database by default to avoid losing later admin/license writes. Database restore requires stopping license-api, preserving current database and WAL/SHM in a new directory, restoring the validated snapshot with owner 10001:10001, then starting the matching old image. Never blindly overwrite a writing database. A publication-specific atomic signed-index rollback script will be recorded after the switch; source Git revert and public-index withdrawal do not downgrade already updated clients. Forward repair must use a higher version and sequence, with 6.1.6/8 available only if still above all intervening releases.
 
+
+Release tag push verified: `v6.1.5` peels to release documentation/source snapshot commit `825645c43eaed7b7fc5134ad3836df6055b8312a`; remote main matched at that point. Package bytes still match the candidate source commit (only documentation differs). Final user-facing notes now describe the published changes and explicitly state the real-platform/detail-identity limitation. Full manifest was re-signed server-side and the unchanged incremental ZIP rebound to that final manifest; final signed plan/index and whole-directory checks passed.
+
+Verified server index-withdrawal command (verification mode succeeded against preserved old signed manifest and ZIP):
+```sh
+cd /opt/dy-updates/tools
+python3 /opt/dy-updates/incoming/6.1.5-release/rollback-index-server.py --verify-only
+# Execute only when withdrawing this exact release is intended:
+python3 /opt/dy-updates/incoming/6.1.5-release/rollback-index-server.py
+```
+The script holds the existing publication lock, verifies the old signature and package hash, preserves current indices uniquely, restores the matching old incremental index (or removes its active reference while preserving it), then atomically restores latest.json. It only accepts current 6.1.5/7 and leaves all public versioned ZIP/plan resources intact. It is not automatic client downgrade.
+
 ---
 
 # Initial candidate hold — historical record
