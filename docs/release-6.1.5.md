@@ -21,3 +21,22 @@ Backup sources: local source-before.zip; trusted Git baseline bundle build/relea
 Recovery: no online rollback is required because online state was not mutated. Candidate Git source revert uses `git revert --no-edit v6.1.5-rc.1` in build/release-6.1.4/git-checkout, then normal push (no force). This returns the synchronized changes to the known prior Git commit; do not infer installed-client rollback. Inspect the preserved service source/config without overwriting production: `mkdir /opt/dy-updates/release-backups/round-6.1.5/recovery-review` then `tar -xzf /opt/dy-updates/release-backups/round-6.1.5/license-source-config.tgz -C /opt/dy-updates/release-backups/round-6.1.5/recovery-review`. If a later deployment fails, stop writes before SQLite restore; retain the current database and WAL/SHM, restore the validated snapshot with service stopped, restore matching old config/image and nginx -t before reload. Do not blindly rewind live license/admin data after new writes. Current production was untouched, so executing that restore now would needlessly lose intervening data.
 
 Server update withdrawal for a later publication must use the existing publish_lock and atomic_json to restore the verified stable/latest.json, plus its corresponding incremental index, retaining current signed indices uniquely first. The exact old 6.1.4 ZIP remains public. Client manual recovery extracts that verified full ZIP into a NEW empty directory after graceful close and preserves LOCALAPPDATA/DYLiveAssistant and browser profile paths. Never reset update_state.json to bypass replay protection. Highest-sequence/version checks prevent automatic downgrade. If sequence 7 or 6.1.5 has been seen, recovery code must use a still higher version/sequence (6.1.6/8 only if no intervening release). Git/index restore does not downgrade clients.
+
+
+Final Git verification: candidate source commit `240d989e9703e678e25aea1f375d69badcd77aab` was pushed atomically with annotated `v6.1.5-rc.1` to `https://github.com/Tyler-Xixi/dy-live`. `git ls-remote` confirms main and the peeled tag both resolve to that commit; trusted checkout was clean. No final `v6.1.5` tag was created. A final signed public-manifest fetch still returned 6.1.4 sequence 6 and the recorded old ZIP hash. Public 6.1.5 download/install acceptance cannot be reported because it was not published.
+
+Reproduce the targeted checks from the development directory in PowerShell (the isolated dependencies already exist):
+```powershell
+$env:PYTHONPATH = "$PWD/build/review-test-deps;$PWD;$PWD/tests"
+python -m unittest -v test_number_target test_detail_lock test_multi_account_browser test_lock_mode_ui test_batch_layout test_announcements test_announcement_ui test_update_incremental test_update_incremental_staging test_update_ui test_update_diagnostics test_update_transaction test_update_client test_update_nginx_routes test_update_portable_install
+python build/release-6.1.5/ast-check.py
+```
+The 132-test post-fix result is the current simulated/source evidence. It does not validate the remaining identity requirement.
+
+Concrete source rollback, only if reverting this candidate is intended:
+```powershell
+Set-Location D:/SoftWare-Work/CodexProject/dy-live-main/build/release-6.1.4/git-checkout
+git revert --no-edit 240d989e9703e678e25aea1f375d69badcd77aab
+git -c http.proxy=http://127.0.0.1:7890 push origin main
+```
+Documentation-only commits after this source commit do not change candidate bytes. Local baseline restore into a separate empty directory: `Expand-Archive -LiteralPath D:/SoftWare-Work/CodexProject/dy-live-main/build/release-6.1.5/source-before.zip -DestinationPath D:/SoftWare-Work/CodexProject/dy-live-main/build/release-6.1.5/source-recovery-review`. Do not extract over the working source or user profiles.
