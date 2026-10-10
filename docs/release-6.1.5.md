@@ -1,6 +1,19 @@
-# 6.1.5 release acceptance
+# 6.1.5 — officially published
 
-Status before final manifest switch: 6.1.5 sequence 7, formal publication pending. The historical hold below has been superseded by the user's explicit request to publish and defer stronger detail identity association. No existing safety guards were removed. Unique-card/title detail association remains a known limitation; real platform orders/payments are not verified.
+Source-only recovery was verified in an isolated local clone: 23 paths restored exactly to baseline 138badaedfba76135646fcdb0968f718f3c304b5, with embedded version 6.1.4. Actual development checkout was unchanged. Prefer the following source-only restoration over blindly reverting the candidate commit, because later release-document changes can conflict:
+
+```powershell
+Set-Location D:/SoftWare-Work/CodexProject/dy-live-main/build/release-6.1.4/git-checkout
+$taskRollbackPaths = @(git diff --name-only 138badaedfba76135646fcdb0968f718f3c304b5 240d989e9703e678e25aea1f375d69badcd77aab -- . ':(exclude)docs/release-6.1.5.md')
+git restore --source=138badaedfba76135646fcdb0968f718f3c304b5 --staged --worktree -- $taskRollbackPaths
+git diff --cached --check
+git commit -m 'Restore pre-6.1.5 source; update publication handled separately'
+git -c http.proxy=http://127.0.0.1:7890 push origin main
+```
+
+Use only from a clean trusted checkout after preserving any new changes. This retains release documentation and changes neither server indices nor installed clients. For manual client restoration, gracefully close that installation and extract the verified old ZIP into a new empty directory, retaining LOCALAPPDATA/DYLiveAssistant and the saved browser profile path. Never remove highest-sequence state; automatic repair of clients that saw 6.1.5/7 requires a higher-version/sequence publication.
+
+Final state: public signed full/incremental manifests switched to 6.1.5 sequence 7; independent public download acceptance completed. The historical hold below has been superseded by the user's explicit request to publish and defer stronger detail identity association. No existing safety guards were removed. Unique-card/title detail association remains a known limitation; real platform orders/payments are not verified.
 
 Build source is candidate commit 240d989e9703e678e25aea1f375d69badcd77aab. GUI and nine embedded application/update/announcement/batch modules were compared against current source bytecode, and current source matches the trusted Git checkout. Main/helper/full ZIP hashes below remain unchanged. Signed incremental 6.1.4-to-6.1.5 ZIP SHA256 aa4516beec680b35635b5e08cd69ca9c2dc470c724d87c438fa8452f636dae24, 18,186,938 bytes; full ZIP 68,756,789 bytes. Official server signing keys stayed on the server. Full and incremental private signed targets are identical.
 
@@ -33,6 +46,34 @@ python3 /opt/dy-updates/incoming/6.1.5-release/rollback-index-server.py --verify
 python3 /opt/dy-updates/incoming/6.1.5-release/rollback-index-server.py
 ```
 The script holds the existing publication lock, verifies the old signature and package hash, preserves current indices uniquely, restores the matching old incremental index (or removes its active reference while preserving it), then atomically restores latest.json. It only accepts current 6.1.5/7 and leaves all public versioned ZIP/plan resources intact. It is not automatic client downgrade.
+
+
+Local distribution alias: D:/SoftWare-Work/CodexProject/dy-live-main/dist/DYLiveAssistant6.1.5.zip is byte-identical to the signed full package. Existing running dist executable was not replaced; old 6.1.4 installation and package remain available.
+
+Database restoration commands, ONLY after deciding that losing later writes is acceptable and stopping all other database writers:
+```sh
+docker compose -f /opt/dy-license/license_server/compose.yaml stop license-api
+backup=/opt/dy-updates/release-backups/round-6.1.5/db-current-$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -m 700 "$backup"
+cp -a /opt/dy-license/license_server/runtime/data/. "$backup/"
+test ! -e /opt/dy-license/license_server/runtime/data/licenses.sqlite3-wal || mv /opt/dy-license/license_server/runtime/data/licenses.sqlite3-wal "$backup/active-wal"
+test ! -e /opt/dy-license/license_server/runtime/data/licenses.sqlite3-shm || mv /opt/dy-license/license_server/runtime/data/licenses.sqlite3-shm "$backup/active-shm"
+install -o 10001 -g 10001 -m 600 /opt/dy-updates/release-backups/round-6.1.5/resume-predeploy.sqlite3 /opt/dy-license/license_server/runtime/data/licenses.sqlite3
+# Restore matching service source/image using the commands above, then:
+docker compose -f /opt/dy-license/license_server/compose.yaml up -d --no-build license-api
+```
+The preserved snapshot was integrity-checked before deployment. Do not execute a database rewind solely to withdraw the update manifest.
+
+
+## Final publication evidence
+
+Only after remote Git confirmation and private acceptance, the existing locked publisher uploaded immutable full/delta/plan resources, downloaded each through public HTTPS and verified SHA256 before switching incremental.json and finally latest.json. Public signed latest SHA256 58cc7af9729035ec307932ed5c9b0531bfc5e8b2715a0fa958940eb3e7e3ef8c; incremental index SHA256 6cf8e282a978294a8f5d429e00281f908d802cf45ebaed858af09bbb00658803; signed plan SHA256 7f283adc2eca543348a4a909c9b9506b1df8434695629e08b6ace08823140a97. Complete pre-switch old stable indices retained at /opt/dy-updates/release-backups/round-6.1.5/resume-stable.
+
+Independent Windows-side PUBLIC downloads PASS: full 68,756,789 bytes / 351.25s, incremental 18,186,938 bytes / 78.44s; respective hashes a8d8325ff726dee83e74479e643a9aa38f84594b2b47d8788ab1cf041292e408 and aa4516beec680b35635b5e08cd69ca9c2dc470c724d87c438fa8452f636dae24. Both downloaded archives were checked against their signed file inventories. Public signed indices/plan match final private acceptance. UpdateClient public check offers 6.1.5/7 and its signed incremental plan to a 6.1.4 version, and no update to 6.1.5. Four unknown/sensitive resource paths returned 404. This is source client check plus actual EXE/helper private install evidence; not a separate old frozen GUI update-click test.
+
+Announcement service remains healthy on accepted image sha256:7873bbc9bd9ecd03c41932c968f557d29d00ca43b0ea458fe4c75306d888b7b1; anonymous public announcement API remains 200 after manifest switch. No rollback was required. Old public 6.1.4 full ZIP and all unique prior backups retained. No real platform order/payment or full test discovery was run. Strong detail identity association, real platform behavior, full frozen announcement retry/offline UI/admin browser interaction and separate frozen cancellation/fault injection remain unverified. These limitations were not represented as passed; user explicitly deferred detail identity strengthening.
+
+Evidence logs and generated manifests/downloads remain outside Git at D:/SoftWare-Work/CodexProject/dy-live-main/build/release-6.1.5. Executables/ZIPs are ignored per repository convention. Trusted Git remote is https://github.com/Tyler-Xixi/dy-live. v6.1.5 is the immutable release snapshot at 825645c43eaed7b7fc5134ad3836df6055b8312a, containing identical runtime source to build source commit 240d989e9703e678e25aea1f375d69badcd77aab. Subsequent main commits only record verification and recovery. No force push and no private key/credential/profile/database/log was committed.
 
 ---
 
