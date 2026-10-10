@@ -1,0 +1,48 @@
+name: dy-license
+services:
+  license-api:
+    build:
+      context: ..
+      dockerfile: license_server/Dockerfile
+    image: dy-license:local
+    user: "10001:10001"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      LICENSE_ORIGIN: https://license.txblog.cn
+      LICENSE_DATA_DIR: /data
+      LICENSE_SECRETS_DIR: /secrets
+      LICENSE_KEY_ID: primary-v1
+      LICENSE_LIMIT_AT_PROXY: "1"
+    volumes:
+      - ./runtime/data:/data
+      - ./runtime/secrets:/secrets:ro
+    tmpfs: [/tmp]
+    networks: [license-net]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/health',headers={'Host':'license.txblog.cn'}); urllib.request.urlopen(r,timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  license-bootstrap:
+    image: dy-license:local
+    profiles: [setup]
+    user: "0"
+    entrypoint: [python, -m, license_server.cli]
+    stdin_open: true
+    tty: true
+    environment:
+      LICENSE_ORIGIN: https://license.txblog.cn
+      LICENSE_DATA_DIR: /data
+      LICENSE_SECRETS_DIR: /secrets
+      LICENSE_KEY_ID: primary-v1
+    volumes:
+      - ./runtime/data:/data
+      - ./runtime/secrets:/secrets
+    networks: [license-net]
+networks:
+  license-net:
+    name: dy-license-private
+    internal: true

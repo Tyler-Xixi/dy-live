@@ -31,6 +31,7 @@ class MatchingTests(unittest.TestCase):
             product_name="[6]手工制品硅胶捏捏玩具，默认微瑕",
             product_id="",
             target_price=6,
+            strict_product_match=False,
         )
         text = "手工制品硅胶捏捏玩具 默认微瑕\n活动价：￥6\n立即购买"
         self.assertTrue(app.product_matches(text, config))
@@ -53,8 +54,13 @@ class MatchingTests(unittest.TestCase):
     def test_waiting_state_wins_over_generic_purchase_text(self) -> None:
         self.assertEqual(app.product_action_state("等待开售，已有10人购买"), "waiting")
 
+    def test_stock_overlay_before_list_number_keeps_identity(self):
+        config = app.AutomationConfig(product_name='手作球解压玩具', product_id='1', target_price=20)
+        text = '- 已抢光 -\n1\n【麦序】手作球解压玩具\n¥20\n去抢购'
+        self.assertTrue(app.product_list_index_matches(text, config))
+
     def test_hidden_price_target_card_is_recognized(self) -> None:
-        config = app.AutomationConfig()
+        config = app.AutomationConfig(product_name='[6]手工制品硅胶捏捏玩具，默认微瑕', product_id='2', target_price=6)
         text = "2\n[6]手工制品硅胶捏捏玩具，默认微瑕\n7天无理由退货\n查看价格"
         self.assertTrue(app.is_hidden_price_target_card_text(text, config))
 
@@ -66,10 +72,10 @@ class MatchingTests(unittest.TestCase):
 class ConfigurationTests(unittest.TestCase):
     def test_requested_initial_values(self) -> None:
         config = app.AutomationConfig()
-        self.assertEqual(config.live_url, "https://live.douyin.com/749508379274")
-        self.assertEqual(config.product_name, "[6]手工制品硅胶捏捏玩具，默认微瑕")
-        self.assertEqual(config.product_id, "2")
-        self.assertEqual(config.target_price, 6)
+        self.assertEqual(config.live_url, "https://live.douyin.com/712159628601")
+        self.assertEqual(config.product_name, "【麦序】手作球解压玩具")
+        self.assertEqual(config.product_id, "1")
+        self.assertEqual(config.target_price, 20)
 
     def test_python_playwright_uses_locator_first_property(self) -> None:
         source = Path(app.__file__).read_text(encoding="utf-8")
@@ -92,11 +98,11 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_invalid_schedule_is_reported(self) -> None:
         self.assertEqual(app.invalid_schedule_entries("25:00:00"), ["25:00:00"])
-        self.assertEqual(app.invalid_schedule_entries("12:00:00,bad"), ["bad"])
+        self.assertEqual(app.invalid_schedule_entries("12:00-13:00,bad"), ["bad"])
         self.assertTrue(app.invalid_schedule_entries("1:00,2:00,3:00,4:00,5:00"))
 
     def test_valid_schedule_and_url(self) -> None:
-        self.assertEqual(len(app.parse_schedule_windows("10:29:00,12:29:00")), 2)
+        self.assertEqual(len(app.parse_schedule_windows("10:29-11:00,12:29-13:00")), 2)
         self.assertTrue(app.is_allowed_douyin_url("https://live.douyin.com/123"))
         self.assertFalse(app.is_allowed_douyin_url("http://live.douyin.com/123"))
         self.assertFalse(app.is_allowed_douyin_url("https://example.com/123"))
@@ -126,6 +132,11 @@ class PaymentFlowTests(unittest.TestCase):
                 return DummyLocator()
 
         class TestRunner(app.AutomationRunner):
+            def flash_payment_snapshot(self, _page):
+                # This unit covers the generic fallback; real DOM fast-path tests
+                # live in test_flash_fast_path.py.
+                return None
+
             def visible_text_element_candidates(self, *_args, **_kwargs):
                 return [{"text": "立即支付 ¥6"}]
 
@@ -144,7 +155,7 @@ class PaymentFlowTests(unittest.TestCase):
             def close_payment_layer(self, _page):
                 raise AssertionError("auto pay must not close the payment layer")
 
-        config = app.AutomationConfig(auto_pay=True, dry_run=False)
+        config = app.AutomationConfig(auto_pay=True, dry_run=False, target_price=6)
         runner = TestRunner(config, lambda *_args: None, threading.Event())
         self.assertTrue(runner.submit_payment_then_abandon(DummyPage()))
         self.assertEqual(runner.state["payment_clicks"], 1)

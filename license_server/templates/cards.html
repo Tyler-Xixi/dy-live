@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block content %}
+<section class="panel"><h2>生成卡密</h2><p class="muted">完整卡密只显示一次，请立即复制或下载保存。有效期从首次激活开始计时。</p>
+<form id="generate-form" class="form-row"><label>数量<input name="count" type="number" min="1" max="1000" value="1" required></label>
+<label>期限预设<select name="preset" id="term-preset"><option value="1">天卡 · 1 天</option><option value="30" selected>月卡 · 30 天</option><option value="365">年卡 · 365 天</option><option value="custom">自定义天数</option><option value="permanent">永久</option></select></label>
+<label>有效天数<input id="duration-days" name="duration_days" type="number" min="1" max="365000" value="30" required></label>
+<label class="grow">备注<input name="note" maxlength="500" placeholder="用户名称或用途"></label><button type="submit">生成卡密</button></form>
+{% include "generated.html" %}</section>
+<section class="panel"><div class="section-title"><h2>卡密列表</h2><span class="muted">共 {{ cards.total }} 条</span></div>
+<form class="form-row filters" action="/admin/cards" method="get"><label class="grow">搜索<input name="q" value="{{ q }}" maxlength="500" placeholder="编号、备注、批次或卡密尾号"></label>
+<label>状态<select name="status"><option value="">全部（不含归档）</option>{% for value,label in [('unused','未激活'),('active','已激活'),('unbound','已解绑'),('expired','已过期'),('disabled','已停用'),('archived','已归档')] %}<option value="{{ value }}" {% if status==value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+<label>到期时间起（香港时间）<input name="expiry_from" type="datetime-local" value="{{ expiry_from }}"></label>
+<label>到期时间止（香港时间）<input name="expiry_to" type="datetime-local" value="{{ expiry_to }}"></label>
+<button class="secondary" type="submit">筛选</button></form>
+<div class="table-scroll"><table><thead><tr><th>卡密 / 编号</th><th>状态</th><th>有效期</th><th>绑定电脑</th><th>备注</th><th></th></tr></thead><tbody>
+{% for card in cards.items %}<tr><td><code>{{ card.mask }}</code><small>{{ card.id }}</small></td><td><span class="pill {{ card.status }}">{{ card.status }}</span></td>
+<td>{% if card.duration_days is none %}永久{% elif card.activated_at is none %}激活后 {{ card.duration_days }} 天{% else %}{{ card.expires_at|hkdate }}{% endif %}</td><td>{{ card.device_summary or '未绑定' }}</td><td class="note">{{ card.note or '—' }}</td><td><a href="/admin/cards/{{ card.id }}">管理</a></td></tr>
+{% else %}<tr><td colspan="6" class="empty">暂无卡密，可以先生成一批。</td></tr>{% endfor %}</tbody></table></div>
+<div class="pager"><a href="/admin/cards?page={{ [1,cards.page-1]|max }}&q={{ q|urlencode }}&status={{ status|urlencode }}&expiry_from={{ expiry_from|urlencode }}&expiry_to={{ expiry_to|urlencode }}">上一页</a><span>第 {{ cards.page }} 页</span><a href="/admin/cards?page={{ cards.page+1 }}&q={{ q|urlencode }}&status={{ status|urlencode }}&expiry_from={{ expiry_from|urlencode }}&expiry_to={{ expiry_to|urlencode }}">下一页</a></div></section>
+<p class="notice">停用、修改期限和解绑会在用户下次成功联网时生效。长期断网的旧电脑不能即时撤销授权。</p>
+{% endblock %}

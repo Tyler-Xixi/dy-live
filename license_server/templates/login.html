@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}"><title>管理员登录 · DY 授权中心</title>
+<link rel="stylesheet" href="/static/admin.css"><script src="/static/admin.js" defer></script></head>
+<body class="login-body"><main class="login-card"><div class="brand">DY<span>授权中心</span></div><h1>管理员登录</h1><p class="muted">仅管理员可访问，不开放用户注册。</p>
+<form id="login-form"><label>账号<input name="username" autocomplete="username" maxlength="64" required></label>
+<label>密码<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+<button type="submit">安全登录</button></form><p id="message" role="status" hidden></p><p class="muted">忘记密码？通过服务器命令重设。</p></main></body></html>

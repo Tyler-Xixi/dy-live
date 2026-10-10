@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}<section class="panel"><p class="muted">保留卡密新增、修改、激活、停用、恢复、解绑和归档的操作记录。</p>
+<div class="table-scroll"><table><thead><tr><th>时间（香港时间）</th><th>操作者</th><th>操作</th><th>卡密编号</th><th>变更</th></tr></thead><tbody>
+{% for entry in items %}<tr><td>{{ entry.at|hkdate }}</td><td>{{ entry.actor }}</td><td>{{ entry.action }}</td><td><code>{{ entry.card_id or '—' }}</code></td><td class="note">{{ entry.details }}</td></tr>
+{% else %}<tr><td colspan="5" class="empty">暂无操作记录</td></tr>{% endfor %}</tbody></table></div>
+<div class="pager"><a href="/admin/audit?page={{ [1,page-1]|max }}">上一页</a><span>第 {{ page }} 页</span><a href="/admin/audit?page={{ page+1 }}">下一页</a></div></section>{% endblock %}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew the dedicated DY license TLS certificate
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/sh /opt/dy-license/license_server/deploy/renew-certificate.sh
+TimeoutStartSec=20min

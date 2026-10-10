@@ -1,0 +1,17 @@
+# TEMPLATE: confirm blog service label equals frontend before use.
+# Run with original Compose first; preserves its existing blog volumes/ports.
+services:
+  frontend:
+    ports:
+      - "443:443"
+    volumes:
+      - /opt/dy-license/license_server/deploy/active.nginx.conf:/etc/nginx/conf.d/license-site.conf:ro
+      - /opt/dy-license/license_server/runtime/acme:/var/www/license-acme:ro
+      - /opt/dy-license/license_server/runtime/certificates:/etc/letsencrypt:ro
+    networks:
+      default: {}
+      license-net: {}
+networks:
+  license-net:
+    external: true
+    name: dy-license-private

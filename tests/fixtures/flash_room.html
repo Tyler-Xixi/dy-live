@@ -1,0 +1,86 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<title>本地直播商品模拟 · 不会创建真实订单</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111319;color:#eceef4;font:15px system-ui}
+header{padding:18px 28px;background:#1c202a}main{display:grid;grid-template-columns:1fr 380px;gap:18px;padding:20px}
+.live{height:700px;background:linear-gradient(130deg,#24333e,#39314c);padding:35px;border-radius:16px}
+.chat{height:150px;overflow:hidden;margin-top:50px;color:#bbb}ul{padding:0;margin:0;height:700px;overflow:auto}
+li{list-style:none;border-radius:10px;background:#fff;color:#222;margin-bottom:12px;padding:16px}
+button{border:0;border-radius:6px;padding:12px 20px;background:#ff345b;color:white;cursor:pointer}
+.Yys40cl5,button:disabled{background:#bbb;cursor:default}.card-title{font-weight:600;margin:14px 0}
+#checkout{display:none;position:fixed;inset:40px 30px 25px auto;width:480px;background:#f4f5f8;color:#222;border-radius:16px;padding:25px;box-shadow:0 0 0 100vmax #0008}
+.details{background:white;padding:18px;border-radius:12px}.footer{position:absolute;bottom:20px;left:20px;right:20px;background:white;border-radius:12px;padding:15px}
+.iHAKgO8B{height:50px;background:#ff345b;color:white;text-align:center;line-height:50px;border-radius:8px;cursor:pointer}
+.iHAKgO8B[aria-disabled=true]{background:#ffd5de;cursor:default}#checkout-status{color:#d66b12}
+#transition-cover{position:fixed;inset:0;z-index:20;background:#0001}small{color:#9aa1b5}
+</style>
+<header>本地直播商品模拟 <small>隔离数据 · 虚拟库存 · 虚拟订单</small></header>
+<main><section class="live"><h2>模拟直播画面</h2><p>商家按独立时间表上架，库存由服务端判断。</p><button id="products">全部商品</button><div class="chat" id="chat"></div></section>
+<ul id="goods"><li id="target" class="sLOeOa5R"><span>1</span><div class="card-title" data-e2e="promotion-title">【麦序】手作球解压玩具</div><p data-e2e="price-Area">¥20</p><span id="stock" class="kXqsFdwa">已抢光</span><button data-e2e="shop-buyBtn" class="Yys40cl5">去抢购</button></li></ul></main>
+<section id="checkout"><button id="detail-back" aria-label="返回">返回</button><h3>【麦序】手作球解压玩具</h3><p>已选择 默认</p><p id="checkout-status"></p><p id="qr" style="display:none">请打开抖音APP扫描二维码 购买此商品</p><div class="details"><p>购买数量 1</p><p>订单留言</p><p>优惠明细</p><p>正在加载结算信息…</p></div><div class="footer"><p>本地测试收货信息（虚构）</p><div class="iHAKgO8B" aria-disabled="true">支付 ¥0.00</div></div></section>
+<script>
+const config=__SCENARIO__, run=new URLSearchParams(location.search).get('run');
+const detailMode=new URLSearchParams(location.search).get('detailLock')==='1';
+window.result={readyAt:null,buyAt:null,submitAt:null,confirmAt:null,detailOpenedAt:null,buyClicks:0,payClicks:0};
+let available=false, orderId=null, replaced=false, checkoutReady=false;
+const checkout=document.querySelector('#checkout'), pay=document.querySelector('.iHAKgO8B');
+const status=document.querySelector('#checkout-status');
+for(let i=2;i<=25;i++){const item=document.createElement('li');item.innerHTML=`<span>${i}</span><p>背景商品 ${i}</p><p>¥${i+30}</p><span>库存不足</span><button disabled>已抢完</button>`;document.querySelector('#goods').append(item)}
+let messages=0;setInterval(()=>{document.querySelector('#chat').textContent=Array.from({length:8},(_,i)=>`本地模拟观众 ${messages+i}：等待上架`).join('\n');messages++},150);
+function renderStock(s){
+  available=s.stock>0;
+  if(available&&config.replace_card&&!replaced){const node=document.querySelector('#target');node.replaceWith(node.cloneNode(true));replaced=true}
+  document.querySelector('#stock').textContent=available?'':'已抢光';
+  document.querySelector('[data-e2e="shop-buyBtn"]').className=available?'':'Yys40cl5';
+  if(available&&result.readyAt===null)result.readyAt=performance.now();
+  if(detailMode&&checkoutReady&&checkout.style.display==='block'&&!orderId&&config.detail_auto_update)renderDetail(s);
+  if(!available&&s.released&&checkoutReady&&!orderId){status.textContent='商品已抢光，请选购其他商品';pay.textContent='支付 ¥0.00';pay.setAttribute('aria-disabled','true')}
+}
+const events=new EventSource('/events?run='+run);
+events.onmessage=event=>renderStock(JSON.parse(event.data));
+let overlayApplied=false;
+function renderDetail(answer){
+  const inStock=answer.stock>0;
+  document.querySelector('#qr').style.display=inStock?'none':'block';
+  pay.style.display=inStock?'block':'none';
+  status.textContent=inStock?'':'商品已抢光，请选购其他商品';
+  if(!inStock){pay.setAttribute('aria-disabled','true');pay.textContent='支付 ¥0.00';return}
+  const hydrate=()=>{if(!available)return;pay.textContent='支付 ¥'+answer.price.toFixed(2);pay.setAttribute('aria-disabled','false')};
+  if(config.hydrate_ms){pay.setAttribute('aria-disabled','false');setTimeout(hydrate,config.hydrate_ms)}else hydrate();
+  if(config.overlay_ms&&!overlayApplied){overlayApplied=true;const cover=document.createElement('div');cover.id='transition-cover';document.body.append(cover);setTimeout(()=>cover.remove(),config.overlay_ms)}
+}
+document.querySelector('#detail-back').onclick=()=>{checkout.style.display='none';checkoutReady=false};
+document.querySelector('[data-e2e="promotion-title"]').onclick=async()=>{
+  if(!detailMode)return;
+  if(result.detailOpenedAt===null)result.detailOpenedAt=performance.now();
+  checkout.style.display='block';
+  const answer=await fetch('/checkout?run='+run).then(r=>r.json());
+  checkoutReady=true;renderDetail(answer);
+};
+document.querySelector('#goods').onclick=async event=>{
+  if(!event.target.closest('#target [data-e2e="shop-buyBtn"]'))return;
+  result.buyClicks++;
+  if(config.require_trusted_purchase&&!event.isTrusted)return;
+  if(!available)return;
+  result.buyAt=performance.now();checkout.style.display='block';
+  const answer=await fetch('/checkout?run='+run).then(r=>r.json());
+  setTimeout(()=>{
+    checkoutReady=true;
+    if(answer.stock<=0||!available){status.textContent='商品已抢光，请选购其他商品';return}
+    const hydrate=()=>{pay.textContent='支付 ¥'+answer.price.toFixed(2);pay.setAttribute('aria-disabled','false')};
+    if(config.hydrate_ms){pay.setAttribute('aria-disabled','false');setTimeout(hydrate,config.hydrate_ms)}else hydrate();
+    if(config.overlay_ms){const cover=document.createElement('div');cover.id='transition-cover';document.body.append(cover);setTimeout(()=>cover.remove(),config.overlay_ms)}
+  },config.render_ms);
+};
+pay.onclick=async()=>{
+  result.payClicks++;
+  if(pay.getAttribute('aria-disabled')==='true')return;
+  result.submitAt=performance.now();
+  try{
+    const answer=await fetch('/order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run,product:'toy',price:Number(pay.textContent.replace(/[^\d.]/g,'')),quantity:1})}).then(r=>r.json());
+    if(answer.success){orderId=answer.id;result.confirmAt=performance.now();events.close();checkout.innerHTML=detailMode?'<h3>待付款</h3><p>订单号：'+orderId+'</p>':'<h3>支付成功</h3><p>本地模拟订单 '+orderId+'</p>'}
+    else if(answer.verification){status.textContent='订单需完成支付安全验证';pay.setAttribute('aria-disabled','true')}
+    else{status.textContent='商品已抢光，请选购其他商品';pay.textContent='支付 ¥0.00';pay.setAttribute('aria-disabled','true')}
+  }catch(error){status.textContent='订单结果待确认，请核对后再操作';pay.setAttribute('aria-disabled','true')}
+};
+</script></html>

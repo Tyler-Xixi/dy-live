@@ -79,9 +79,50 @@ class ProductOptionsTests(unittest.TestCase):
     def test_unconfigured_second_group_blocks_payment(self):
         self.page.evaluate("""() => {
             const group=document.createElement('div'); group.className='YTFcT_zp';
-            group.innerHTML='<div class="R_G6ohly">颜色</div><div class="ufz0AqTE vZSOutR4">红色</div>';
+            group.innerHTML='<div class="R_G6ohly">颜色</div><div class="ufz0AqTE vZSOutR4">红色</div><div class="ufz0AqTE">蓝色</div>';
             document.body.appendChild(group);
         }""")
+        self.assert_blocked(self.runner())
+
+    def add_fixed_group(self, attributes='', selected=True):
+        self.page.evaluate('''args => {
+            const group=document.createElement('div'); group.className='YTFcT_zp';
+            group.innerHTML='<div class="R_G6ohly">网络类型</div><div class="ufz0AqTE '+
+                (args.selected?'vZSOutR4':'')+'" '+args.attributes+'>全网通</div>';
+            group.querySelector('.ufz0AqTE').onclick=()=>window.fixedClicks++;
+            window.fixedClicks=0; document.body.appendChild(group);
+        }''', {'attributes': attributes, 'selected': selected})
+
+    def test_omitted_selected_single_option_allows_payment_without_clicking_it(self):
+        self.add_fixed_group('style="pointer-events:none"')
+        self.assertTrue(self.runner().submit_payment_then_abandon(self.page))
+        self.assertEqual(self.page.evaluate('window.payClicks'), 1)
+        self.assertEqual(self.page.evaluate('window.fixedClicks'), 0)
+
+    def test_omitted_single_option_not_selected_blocks_payment(self):
+        self.add_fixed_group(selected=False)
+        self.assert_blocked(self.runner())
+
+    def test_omitted_selected_single_option_unavailable_blocks_payment(self):
+        for attributes in ('aria-disabled="true"', 'disabled', 'class="soldout"'):
+            with self.subTest(attributes=attributes):
+                # Preserve the control classes while marking it unavailable.
+                self.add_fixed_group()
+                action=self.page.locator('.YTFcT_zp').last.locator('.ufz0AqTE')
+                if attributes.startswith('class'):
+                    action.evaluate("el=>el.classList.add('soldout')")
+                else:
+                    action.evaluate("(el, attr)=>el.setAttribute(attr, 'true')",
+                                    'disabled' if attributes == 'disabled' else 'aria-disabled')
+                self.assert_blocked(self.runner())
+                self.page.locator('.YTFcT_zp').last.evaluate('el=>el.remove()')
+
+    def test_omitted_multiple_options_with_only_one_available_blocks_payment(self):
+        self.add_fixed_group()
+        self.page.locator('.YTFcT_zp').last.evaluate('''el=>{
+            const other=document.createElement('div'); other.className='ufz0AqTE soldout';
+            other.textContent='其他网络'; el.appendChild(other);
+        }''')
         self.assert_blocked(self.runner())
 
     def test_two_configured_groups_allow_payment(self):
@@ -199,6 +240,7 @@ class ProductOptionsTests(unittest.TestCase):
 
     def test_flash_completion_requires_payment_confirmation(self):
         runner = self.runner()
+        runner.config.purchase_speed_priority = False  # legacy automatic-payment flow
         class OfflinePage:
             def goto(self, *args, **kwargs):
                 pass
@@ -246,6 +288,81 @@ class ProductOptionsTests(unittest.TestCase):
 
     def test_locked_card_does_not_click_before_opening(self):
         runner = self.locked_runner()
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.assertEqual(self.page.evaluate('window.buyClicks'), 0)
+
+    def test_locked_observer_persists_across_detection_cycles(self):
+        runner=self.locked_runner()
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.page.evaluate('window.originalWatcher=window.__dylaStockWatcher')
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.assertTrue(self.page.evaluate('!!window.originalWatcher && window.originalWatcher === window.__dylaStockWatcher'))
+
+    def test_recycled_waiting_card_releases_lock_before_sale(self):
+        runner=self.locked_runner()
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.page.locator('#target').evaluate("el=>el.firstChild.textContent='2 其他商品 ¥6'")
+        runner.last_identity_check_at=0
+        self.assertIsNone(runner.watch_locked_product(self.page))
+        self.assertIsNone(runner.locked_product)
+        self.assertEqual(self.page.evaluate('window.buyClicks'),0)
+
+    def test_multiple_matching_cards_stop_before_click(self):
+        runner=self.locked_runner()
+        self.page.evaluate("() => {const other=document.querySelector('#target').cloneNode(true);other.id='second';document.body.append(other)}")
+        with self.assertRaises(app.GracefulStop):
+            runner.assert_unique_product(self.page)
+        self.assertEqual(self.page.evaluate('window.buyClicks'),0)
+
+    def test_persistent_observer_remembers_brief_sale_between_cycles(self):
+        runner=self.locked_runner()
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.page.evaluate("""() => {
+            setTimeout(()=>{const b=document.querySelector('button');b.disabled=false;b.textContent='去抢购'},10);
+            setTimeout(()=>{const b=document.querySelector('button');b.disabled=true;b.textContent='已抢完'},30);
+        }""")
+        self.page.wait_for_timeout(90)
+        with self.assertRaises(app.GracefulStop):
+            runner.watch_locked_product(self.page)
+        self.assertEqual(self.page.evaluate('window.buyClicks'),0)
+
+    def test_offline_page_is_reported_without_buying(self):
+        runner=self.locked_runner()
+        self.page.evaluate("Object.defineProperty(navigator,'onLine',{get:()=>false})")
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.assertIn('离线',runner.monitor_scan_error)
+        self.assertIsNone(runner.monitor_last_success)
+        self.assertEqual(self.page.evaluate('window.buyClicks'),0)
+
+    def test_initial_sold_out_card_waits_for_restock(self):
+        runner = self.locked_runner()
+        self.page.evaluate("""() => {
+            const hint=document.createElement('div'); hint.textContent='- 已抢光 -'; hint.id='stock';
+            document.querySelector('#target').appendChild(hint);
+            const b=document.querySelector('button'); b.disabled=false; b.textContent='去抢购'; b.className='Yys40cl5';
+        }""")
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.assertEqual(self.page.evaluate('window.buyClicks'), 0)
+        self.page.evaluate("""() => {
+            document.querySelector('#stock').remove(); document.querySelector('button').className='';
+        }""")
+        self.assertTrue(runner.watch_locked_product(self.page))
+        self.assertEqual(self.page.evaluate('window.buyClicks'), 1)
+
+    def test_stock_lost_after_open_logs_once_and_continues(self):
+        runner = self.locked_runner()
+        runner.config.continue_after_sold_out=True
+        logs=[]; runner.log=lambda level,msg: logs.append(msg)
+        runner.record_stock_state('ready')
+        self.page.locator('button').evaluate("el=>el.textContent='已抢完'")
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.assertFalse(runner.watch_locked_product(self.page))
+        self.assertEqual(sum('未抢到' in msg for msg in logs), 1)
+
+    def test_window_end_prevents_locked_purchase(self):
+        runner = self.locked_runner()
+        runner.monitor_deadline_ms=0
+        self.page.locator('button').evaluate("el=>{el.disabled=false;el.textContent='立即购买'}")
         self.assertFalse(runner.watch_locked_product(self.page))
         self.assertEqual(self.page.evaluate('window.buyClicks'), 0)
 

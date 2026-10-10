@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}<a href="/admin/cards">← 返回卡密列表</a>
+<section class="panel"><div class="section-title"><h2>{{ card.mask }}</h2><span class="pill">{{ card.status }}</span></div>
+<dl class="details"><dt>编号</dt><dd>{{ card.id }}</dd><dt>批次</dt><dd>{{ card.batch_id }}</dd><dt>首次激活</dt><dd>{{ card.activated_at|hkdate }}</dd>
+<dt>绑定电脑摘要</dt><dd>{{ card.device_summary or '未绑定' }}</dd><dt>最近成功校验</dt><dd>{{ card.last_check|hkdate }}（不是实时在线状态）</dd><dt>到期时间</dt><dd>{{ card.expires_at|hkdate if card.duration_days is not none else '永久' }}</dd></dl>
+{% if card.status!='archived' %}<form id="edit-card-form" data-card-id="{{ card.id }}"><label>备注<input name="note" maxlength="500" value="{{ card.note }}"></label>
+<label class="check"><input name="permanent" type="checkbox" {% if card.duration_days is none %}checked{% endif %}>永久有效</label>
+{% if card.activated_at is none %}<label>激活后有效天数<input name="duration_days" type="number" value="{{ card.duration_days or 30 }}" min="1" max="365000"></label>
+{% else %}<label>到期时间（香港时间）<input name="expires_at" type="datetime-local" value="{{ card.expires_at|hkinput }}"></label>{% endif %}
+<button type="submit">保存修改</button></form></section>
+<section class="panel"><h2>授权操作</h2><div class="actions">
+{% if card.status=='disabled' %}<button data-card-id="{{ card.id }}" data-action="restore">恢复授权</button>{% else %}<button class="secondary" data-card-id="{{ card.id }}" data-action="disable">停用</button>{% endif %}
+<button class="secondary" data-card-id="{{ card.id }}" data-action="unbind">解绑换机</button><button class="danger" data-card-id="{{ card.id }}" data-action="archive">停用并归档</button></div>
+{% if card.expires_at is not none %}<form id="renew-form" data-card-id="{{ card.id }}" class="form-row"><label>增加天数<input name="days" type="number" value="30" min="1" max="365000" required></label><button type="submit">续期</button></form>{% endif %}
+<p class="notice">解绑不重置有效期。长期断网的旧电脑可能继续使用原授权，无法保证立即停用。</p>{% endif %}</section>{% endblock %}

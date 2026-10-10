@@ -1,0 +1,12 @@
+# Source-only allowlist; excludes runtime keys/database even on later rebuilds.
+**
+!license_protocol.py
+!license_server/
+!license_server/*.py
+!license_server/requirements.txt
+!license_server/templates/
+!license_server/templates/**
+!license_server/static/
+!license_server/static/**
+!license_server/Dockerfile
+!license_server/Dockerfile.dockerignore
