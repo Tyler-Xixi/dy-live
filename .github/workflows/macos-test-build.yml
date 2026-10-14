@@ -1,0 +1,48 @@
+name: Mac independent test build
+on:
+  workflow_dispatch:
+  push:
+    branches: [macos-test-build]
+    paths: [macos/**, .github/workflows/macos-test-build.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: ${{ matrix.arch == 'arm64' && 'arm64' || 'x64' }}
+      - name: Verify Python and Tk
+        run: python -c 'import platform,tkinter;print(platform.machine(),tkinter.TkVersion)'
+      - name: Platform and isolation checks
+        run: python -m unittest discover -s tests -v
+      - name: Build native app
+        env:
+          MAC_PYTHON: python
+        run: bash build_mac.sh '${{ matrix.arch }}'
+      - name: Check Mac source GUI without ordering
+        run: .venv-${{ matrix.arch }}/bin/python tools/mac_smoke.py
+      - name: Upload test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DYLiveAssistantMac-${{ matrix.arch }}-test
+          path: macos/dist/DYLiveAssistantMac-*-*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv*/
+build/
+dist/
+*.log
+local_license_keys.py
+license.json
+online_license.json
+preferences.json
+live-room-profile/
+diagnostics/
+assets/app.icns
