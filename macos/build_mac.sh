@@ -24,5 +24,11 @@ iconutil -c icns "$MAC_ICON_WORK/app.iconset" -o assets/app.icns
 "$MAC_VENV" -m PyInstaller --noconfirm --clean --distpath "dist/$DY_MAC_ARCH" --workpath "build/$DY_MAC_ARCH" dy_live_mac.spec
 MAC_APP="dist/$DY_MAC_ARCH/DY直播间自助工具.app"
 codesign --verify --deep --strict "$MAC_APP"
-ditto -c -k --keepParent "$MAC_APP" "dist/DYLiveAssistantMac-6.1.21-mac.1-$DY_MAC_ARCH.zip"
+MAC_NATIVE_ZIP="$MAC_ICON_WORK/native.zip"
+MAC_FINAL_ZIP="dist/DYLiveAssistantMac-6.1.21-mac.1-$DY_MAC_ARCH.zip"
+ditto -c -k --keepParent "$MAC_APP" "$MAC_NATIVE_ZIP"
+"$MAC_VENV" tools/normalize_mac_zip.py "$MAC_NATIVE_ZIP" "$MAC_FINAL_ZIP"
+mkdir "$MAC_ICON_WORK/verify"
+ditto -x -k "$MAC_FINAL_ZIP" "$MAC_ICON_WORK/verify"
+codesign --verify --deep --strict "$MAC_ICON_WORK/verify/DY直播间自助工具.app"
 echo "Built $MAC_APP. Native macOS validation is still required before release."
