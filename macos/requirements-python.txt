@@ -2,3 +2,4 @@ playwright==1.60.0
 cryptography==50.0.2
 
 certifi==2026.10.19
+truststore==0.10.5
