@@ -3988,6 +3988,10 @@ class App(tk.Tk):
 
 
 def main() -> None:
+    if '--mac-self-check' in sys.argv:
+        from mac_platform import bundled_self_check
+        bundled_self_check(sys.argv[sys.argv.index('--mac-self-check')+1])
+        return
     online = OnlineLicenseClient(APP_DATA_DIR, machine_fingerprint(), LICENSE_PUBLIC_KEYS, LicenseTransport(LICENSE_ORIGIN))
     activation = ActivationDialog(LocalLicenseClient(), online)
     activation.mainloop()

@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 datas,binaries,hiddenimports=collect_all('playwright')
 arch=os.environ['DY_MAC_ARCH']
 a=Analysis(['dy_grab_gui.py'],pathex=[],binaries=binaries,
-           datas=datas+[('assets/app.png','assets'),('用户使用说明.md','.')],hiddenimports=hiddenimports)
+           datas=datas+[('assets/app.png','assets'),('用户使用说明.md','.')],hiddenimports=hiddenimports,runtime_hooks=['mac_tls_hook.py'])
 # Intel runner Python and cryptography can depend on different OpenSSL 3
 # minor versions under the same dylib names. Bundle one matching, newer pair.
 if arch == 'x86_64':
@@ -26,4 +26,3 @@ app=BUNDLE(coll,name='DY直播间自助工具.app',icon='assets/app.icns',
            bundle_identifier='cn.txblog.dyliveassistant.mac',
            info_plist={'CFBundleShortVersionString':'6.2.39','CFBundleVersion':'6239','LSMinimumSystemVersion':'15.0',
                        'NSHighResolutionCapable':True,'CFBundleDisplayName':'DY直播间自助工具'})
-

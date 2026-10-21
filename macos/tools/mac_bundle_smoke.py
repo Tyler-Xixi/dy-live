@@ -5,6 +5,11 @@ exe=Path('dist')/arch/'DY直播间自助工具.app/Contents/MacOS/DYLiveAssistan
 assert exe.is_file()
 with tempfile.TemporaryDirectory(prefix='mac-empty-user-') as directory:
     env=dict(os.environ,HOME=directory)
+    env.pop('SSL_CERT_FILE',None)
+    report=Path(directory)/'self-check.json'
+    subprocess.run([str(exe.resolve()),'--mac-self-check',str(report)],env=env,check=True,timeout=45)
+    import json
+    assert json.loads(report.read_text())['https_health']==200
     with open(Path(directory)/'out.log','wb') as log:
         process=subprocess.Popen([str(exe.resolve())],env=env,stdout=log,stderr=log)
         try:

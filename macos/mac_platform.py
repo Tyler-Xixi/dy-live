@@ -38,3 +38,17 @@ def set_window_icon(window, asset_dir):
     import tkinter as tk
     window.mac_icon = tk.PhotoImage(master=window, file=str(Path(asset_dir) / 'app.png'))
     window.iconphoto(True, window.mac_icon)
+
+
+def bundled_self_check(output):
+    """Diagnostic only: imports/TLS health check, never activation or ordering."""
+    import json
+    import ssl
+    import urllib.request
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key=Ed25519PrivateKey.generate();payload=b'mac-self-check'
+    key.public_key().verify(key.sign(payload),payload)
+    with urllib.request.urlopen('https://license.txblog.cn/health',timeout=15) as response:
+        assert response.status==200
+    with Path(output).open('x',encoding='utf-8') as handle:
+        json.dump({'result':'PASS','https_health':200,'architecture':platform.machine(),'ssl':ssl.OPENSSL_VERSION},handle)
