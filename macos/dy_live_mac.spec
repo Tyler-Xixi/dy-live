@@ -12,5 +12,5 @@ coll=COLLECT(exe,a.binaries,a.datas,name='DYLiveAssistantMac')
 app=BUNDLE(coll,name='DY直播间自助工具.app',icon='assets/app.icns',
            codesign_identity=os.environ.get('DY_MAC_SIGNING_IDENTITY'),
            bundle_identifier='cn.txblog.dyliveassistant.mac',
-           info_plist={'CFBundleShortVersionString':'6.1.21','CFBundleVersion':'1',
+           info_plist={'CFBundleShortVersionString':'6.2.39','CFBundleVersion':'6239','LSMinimumSystemVersion':'15.0',
                        'NSHighResolutionCapable':True,'CFBundleDisplayName':'DY直播间自助工具'})

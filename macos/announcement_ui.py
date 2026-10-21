@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.request
 import tkinter as tk
+from window_position import center_window
 from tkinter import ttk
 from tkinter import font as tkfont
 from ui_scrollbar import SmoothScrollbar
@@ -24,12 +25,12 @@ def show_announcements(app, items=None, remember=None):
     window.configure(background='#f4f6fa')
     style=ttk.Style(window)
     style.configure('Bulletin.TFrame',background='#f4f6fa')
-    style.configure('Bulletin.TLabel',background='#f4f6fa',foreground='#65758b',font=('PingFang SC',10))
-    style.configure('Bulletin.Title.TLabel',background='#f4f6fa',foreground='#142c50',font=('PingFang SC',22,'bold'))
-    style.configure('Bulletin.Treeview',background='#ffffff',fieldbackground='#ffffff',foreground='#334155',font=('PingFang SC',11),rowheight=64,borderwidth=0)
+    style.configure('Bulletin.TLabel',background='#f4f6fa',foreground='#65758b',font=('Microsoft YaHei UI',10))
+    style.configure('Bulletin.Title.TLabel',background='#f4f6fa',foreground='#142c50',font=('Microsoft YaHei UI',22,'bold'))
+    style.configure('Bulletin.Treeview',background='#ffffff',fieldbackground='#ffffff',foreground='#334155',font=('Microsoft YaHei UI',11),rowheight=64,borderwidth=0)
     style.map('Bulletin.Treeview',background=[('selected','#dbeafe')],foreground=[('selected','#245fd6')])
-    style.configure('Bulletin.TButton',padding=(14,8),font=('PingFang SC',10))
-    style.configure('Bulletin.Primary.TButton',background='#2865da',foreground='white',padding=(14,8),font=('PingFang SC',10))
+    style.configure('Bulletin.TButton',padding=(14,8),font=('Microsoft YaHei UI',10))
+    style.configure('Bulletin.Primary.TButton',background='#2865da',foreground='white',padding=(14,8),font=('Microsoft YaHei UI',10))
     style.map('Bulletin.Primary.TButton',background=[('active','#1d50b8'),('disabled','#a5bce7')])
     displayed=[]
     results=queue.Queue()
@@ -43,7 +44,7 @@ def show_announcements(app, items=None, remember=None):
     ttk.Label(listing,text='历史公告',style='Bulletin.TLabel').grid(row=0,column=0,sticky='w',pady=(0,8))
     history=ttk.Treeview(listing,show='tree',selectmode='browse',style='Bulletin.Treeview')
     history.column('#0',width=280,minwidth=160)
-    title_font=tkfont.Font(window,font=('PingFang SC',11))
+    title_font=tkfont.Font(window,font=('Microsoft YaHei UI',11))
     style.configure('Bulletin.Treeview',rowheight=max(64,title_font.metrics('linespace')*2+16))
     def wrap_titles(event=None):
         available=max(32,history.column('#0','width')-28)
@@ -68,11 +69,11 @@ def show_announcements(app, items=None, remember=None):
     list_bar.bind('<MouseWheel>',lambda e:(history.yview_scroll(-1 if e.delta>0 else 1,'units'),'break')[-1])
     reader=ttk.Frame(panes,style='Bulletin.TFrame'); panes.add(reader,weight=3)
     reader.columnconfigure(0,weight=1); reader.rowconfigure(0,weight=1)
-    text=tk.Text(reader,wrap='word',width=48,height=14,font=('PingFang SC',12),background='#ffffff',foreground='#334155',relief='flat',borderwidth=0,highlightthickness=1,highlightbackground='#e2e8f0',padx=24,pady=24,spacing1=5,spacing3=12,selectbackground='#dbeafe')
+    text=tk.Text(reader,wrap='word',width=48,height=14,font=('Microsoft YaHei UI',12),background='#ffffff',foreground='#334155',relief='flat',borderwidth=0,highlightthickness=1,highlightbackground='#e2e8f0',padx=24,pady=24,spacing1=5,spacing3=12,selectbackground='#dbeafe')
     text.grid(row=0,column=0,sticky='nsew')
-    text.tag_configure('title',font=('PingFang SC',18,'bold'),foreground='#142c50',spacing3=16)
-    text.tag_configure('time',font=('PingFang SC',9),foreground='#7b8a9f',spacing3=18)
-    text.tag_configure('body',font=('PingFang SC',12),spacing3=12)
+    text.tag_configure('title',font=('Microsoft YaHei UI',18,'bold'),foreground='#142c50',spacing3=16)
+    text.tag_configure('time',font=('Microsoft YaHei UI',9),foreground='#7b8a9f',spacing3=18)
+    text.tag_configure('body',font=('Microsoft YaHei UI',12),spacing3=12)
     text.tag_configure('empty',foreground='#7b8a9f')
     reader_bar=SmoothScrollbar(reader,command=text.yview); reader_bar.grid(row=0,column=1,sticky='ns')
     text.configure(yscrollcommand=reader_bar.set,state='disabled')
@@ -134,6 +135,7 @@ def show_announcements(app, items=None, remember=None):
     window.protocol('WM_DELETE_WINDOW',close)
     if items is None: load()
     else: finish(items)
+    center_window(window,app)
     return window
 
 
@@ -153,7 +155,8 @@ def announcement_key(item):
     """Edits to an existing announcement must also trigger a new notification."""
     identity = str(item.get('id', ''))
     payload = json.dumps(item, ensure_ascii=False, sort_keys=True).encode('utf-8')
-    return identity or hashlib.sha256(payload).hexdigest(), hashlib.sha256(payload).hexdigest()
+    digest = hashlib.sha256(payload).hexdigest()
+    return identity or digest, digest
 
 
 class AnnouncementController:
@@ -170,14 +173,23 @@ class AnnouncementController:
         self.next_check = 0
         self.pending = []
         self.offered = {}
+        self._keys = {}
+        self._resume_refresh = False
         try:
             self.seen = json.loads(self.path.read_text(encoding='utf-8'))
             if not isinstance(self.seen, dict): self.seen = {}
         except (OSError, ValueError):
             self.seen = {}
 
+    def item_key(self, item):
+        cached = self._keys.get(id(item))
+        if cached is None or cached[0] is not item:
+            cached = (item, announcement_key(item))
+            self._keys[id(item)] = cached
+        return cached[1]
+
     def remember(self, items):
-        self.seen.update(dict(announcement_key(item) for item in items))
+        self.seen.update(dict(self.item_key(item) for item in items))
         # The public endpoint returns at most 100 current/historical entries.
         self.seen = dict(list(self.seen.items())[-100:])
         try:
@@ -198,10 +210,14 @@ class AnnouncementController:
         if self.closed or self.fetching: return
         # An explicit check may reoffer a postponed notice; automatic checks do not.
         if self.window is None or not self.window.winfo_exists(): self.offered.clear()
-        self._fetch()
-        if self.timer is None: self.timer = self.app.after(100, self.poll)
+        busy = getattr(self.app, 'update_blocked', lambda: False)()
+        if busy: self._resume_refresh = True
+        else: self._fetch()
+        if self.timer is not None: self.app.after_cancel(self.timer)
+        self.timer = self.app.after(1000 if busy else 100, self.poll)
 
     def _fetch(self):
+        if self.closed or self.fetching: return
         self.fetching = True
         results, fetch = self.results, fetch_announcements
         def work():
@@ -214,6 +230,23 @@ class AnnouncementController:
         if self.closed or getattr(self.app, 'closing', False):
             self.close()
             return
+        if getattr(self.app, 'update_blocked', lambda: False)():
+            self._resume_refresh = True
+            self.timer = self.app.after(1000, self.poll)
+            return
+        if self._resume_refresh:
+            # A request started before ordering may finish during it. Discard
+            # that result and fetch fresh data before offering deferred notices.
+            if self.fetching:
+                try: self.results.get_nowait()
+                except queue.Empty:
+                    self.timer = self.app.after(100, self.poll)
+                    return
+                self.fetching = False
+            self.pending = []
+            self._keys.clear()
+            self._resume_refresh = False
+            self._fetch()
         try:
             items, error = self.results.get_nowait()
         except queue.Empty:
@@ -226,22 +259,23 @@ class AnnouncementController:
             else:
                 # Replace rather than append, so withdrawn/superseded notices disappear.
                 self.pending = []
+                self._keys.clear()
                 for item in items:
-                    identity, digest = announcement_key(item)
+                    identity, digest = self.item_key(item)
                     if self.seen.get(identity) != digest and self.offered.get(identity) != digest:
                         self.pending.append(item)
-        self.pending = [item for item in self.pending if self.seen.get(announcement_key(item)[0]) != announcement_key(item)[1]]
-        busy = getattr(self.app, 'update_blocked', lambda: False)()
-        if self.pending and not busy and not (self.window is not None and self.window.winfo_exists()):
+        self.pending = [item for item in self.pending if self.seen.get(self.item_key(item)[0]) != self.item_key(item)[1]]
+        if self.pending and not (self.window is not None and self.window.winfo_exists()):
             fresh, self.pending = self.pending, []
-            self.offered.update(dict(announcement_key(item) for item in fresh))
+            self.offered.update(dict(self.item_key(item) for item in fresh))
             self.window = show_announcements(self.app, fresh, self.remember)
         button = getattr(self.app, 'announcement_button', None)
         if button is not None and button.winfo_exists():
             label = '公告（新）' if self.pending else '公告'
             if button.cget('text') != label: button.configure(text=label)
         if not self.fetching and time.monotonic() >= self.next_check: self._fetch()
-        self.timer = self.app.after(100, self.poll)
+        delay = 100 if self.fetching else min(1000, max(100, int((self.next_check-time.monotonic())*1000)))
+        self.timer = self.app.after(delay, self.poll)
 
     def close(self):
         self.closed = True

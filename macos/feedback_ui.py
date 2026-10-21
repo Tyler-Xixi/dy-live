@@ -7,6 +7,7 @@ import threading
 import urllib.error
 import urllib.request
 import tkinter as tk
+from window_position import center_window
 from tkinter import ttk, filedialog
 from license_config import LICENSE_ORIGIN
 from ui_scrollbar import SmoothScrollbar
@@ -68,12 +69,12 @@ def show_feedback(app, metadata=None):
     body.pack(fill='both', expand=True)
     body.columnconfigure(0, weight=1)
     body.rowconfigure(2, weight=1)
-    ttk.Label(body, text='向我反馈', font=('PingFang SC', 18, 'bold')).grid(row=0,column=0,sticky='w')
+    ttk.Label(body, text='向我反馈', font=('Microsoft YaHei UI', 18, 'bold')).grid(row=0,column=0,sticky='w')
     ttk.Label(body, text='请说明操作步骤、遇到的问题及发生时间。联系方式可留空。').grid(row=1,column=0,sticky='w',pady=(8,12))
     editor = ttk.Frame(body)
     editor.grid(row=2,column=0,sticky='nsew')
     editor.rowconfigure(0,weight=1); editor.columnconfigure(0,weight=1)
-    description = tk.Text(editor, wrap='word', font=('PingFang SC', 11), height=8,
+    description = tk.Text(editor, wrap='word', font=('Microsoft YaHei UI', 11), height=8,
                           relief='flat',padx=12,pady=12)
     description.grid(row=0,column=0,sticky='nsew')
     bar = SmoothScrollbar(editor,command=description.yview)
@@ -81,7 +82,7 @@ def show_feedback(app, metadata=None):
     ttk.Label(body,text='联系方式（选填）').grid(row=3,column=0,sticky='w',pady=(12,4))
     contact = ttk.Entry(body); contact.grid(row=4,column=0,sticky='ew')
     ttk.Label(body,text='附件：最多5个，每个10MB，合计20MB。提交前请遮盖个人信息。').grid(row=5,column=0,sticky='w',pady=(12,4))
-    listing = tk.Listbox(body,height=4,font=('PingFang SC',10))
+    listing = tk.Listbox(body,height=4,font=('Microsoft YaHei UI',10))
     listing.grid(row=6,column=0,sticky='ew')
     paths = []
     def render_files():
@@ -135,4 +136,5 @@ def show_feedback(app, metadata=None):
         if event.widget is window and timer is not None:
             window.after_cancel(timer)
     window.bind('<Destroy>',closed,add='+')
+    center_window(window,app)
     return window

@@ -45,8 +45,9 @@ def assess_network(site):
 
 
 class NetworkProbe:
-    def __init__(self, progress=lambda _: None):
+    def __init__(self, progress=lambda _: None, on_sample=lambda *_: None):
         self.progress = progress
+        self.on_sample = on_sample
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.active = None
@@ -138,6 +139,7 @@ class NetworkProbe:
                     statuses.append(None)
                     errors.append(type(exc).__name__+': '+str(exc)[:160])
                     connection.close()
+                self.on_sample(label, summarize_samples(samples, statuses))
                 if self.stop.wait(.15):
                     self.check()
         finally:
@@ -174,6 +176,7 @@ class NetworkProbe:
                 if not chunk:
                     break
                 received += len(chunk)
+                self.on_sample('download', {'bytes': received, 'maximum': maximum})
             elapsed = time.perf_counter()-started
             if received != maximum and (not partial or received < 65536):
                 raise ValueError(f'下载样本不完整（{received}/{maximum} 字节）')

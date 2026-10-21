@@ -21,7 +21,7 @@ class MacZipTests(unittest.TestCase):
    source.write_bytes(data)
    normalize(source,target)
    with zipfile.ZipFile(target) as z,zipfile.ZipFile(source,metadata_encoding='utf-8') as old:
-    self.assertIn('README.txt',z.namelist())
+    self.assertIn('使用说明.txt',z.namelist())
     for name,expected in entries.items():
      self.assertEqual(z.read(name),expected)
      self.assertTrue(z.getinfo(name).flag_bits&0x800)

@@ -32,17 +32,21 @@ jobs:
       - name: Verify Python and Tk
         run: python -c 'import platform,tkinter;print(platform.machine(),tkinter.TkVersion)'
       - name: Platform and isolation checks
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install -r requirements-python.txt
+          python -m unittest discover -s tests -v
       - name: Build native app
         env:
           MAC_PYTHON: python
         run: bash build_mac.sh '${{ matrix.arch }}'
       - name: Check Mac source GUI without ordering
         run: .venv-${{ matrix.arch }}/bin/python tools/mac_smoke.py
+      - name: Check bundled app startup
+        run: .venv-${{ matrix.arch }}/bin/python tools/mac_bundle_smoke.py "${{ matrix.arch }}"
       - name: Upload test package
         uses: actions/upload-artifact@v4
         with:
-          name: DYLiveAssistantMac-${{ matrix.arch }}-test
+          name: DYLiveAssistantMac-6.2.39-${{ matrix.arch }}-unnotarized
           path: macos/dist/DYLiveAssistantMac-*-*.zip
           if-no-files-found: error
           retention-days: 14

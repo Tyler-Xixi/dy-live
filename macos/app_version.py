@@ -1,6 +1,5 @@
-"""Embedded release identity; never infer this from neighboring ZIP names."""
-APP_VERSION = '6.1.21-mac.1'
-PRODUCT_ID = 'DYLiveAssistant'
 import sys
 from mac_platform import platform_name
+APP_VERSION = '6.2.39'
+PRODUCT_ID = 'DYLiveAssistant'
 PLATFORM = platform_name() if sys.platform == 'darwin' else 'macos-development'

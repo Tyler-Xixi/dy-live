@@ -1,12 +1,18 @@
 """Select the software's browser while keeping each explicit profile separate."""
 from pathlib import Path
+from browser_discovery import registered_browsers, default_browser
 
 
 BROWSER_CHOICES = {
+    '跟随系统默认浏览器': 'system',
     '自动选择': 'auto',
     'Microsoft Edge': 'msedge',
     'Google Chrome': 'chrome',
 }
+DETECTED_BROWSERS = registered_browsers()
+for token, (label, _) in DETECTED_BROWSERS.items():
+    if token not in BROWSER_CHOICES.values():
+        BROWSER_CHOICES[label + '（兼容性待验证）'] = token
 
 
 def browser_profile_dir(base, choice='auto') -> Path:
@@ -17,21 +23,28 @@ def browser_profile_dir(base, choice='auto') -> Path:
 
 
 def launch_browser(playwright, base, headless, log, choice='auto'):
-    profile_dir = str(browser_profile_dir(base, choice))
+    executable = None
+    if choice == 'system':
+        choice, label, executable = default_browser()
+        log('info', f'系统默认浏览器：{label}；使用软件独立资料目录')
+    elif choice in DETECTED_BROWSERS and choice not in ('msedge', 'chrome'):
+        label, executable = DETECTED_BROWSERS[choice]
+    profile_dir = str(Path(base) / choice) if executable else str(browser_profile_dir(base, choice))
     options = {
         'headless': headless,
         'viewport': {'width': 1365, 'height': 900},
         'locale': 'zh-CN',
         'timezone_id': 'Asia/Shanghai',
-        'args': ['--no-proxy-server'],
     }
     candidates = [('Microsoft Edge', 'msedge'), ('Google Chrome', 'chrome'), ('Playwright Chromium', None)]
     if choice != 'auto':
         candidates = [(label, channel) for label, channel in candidates if channel == choice]
+    if executable:
+        candidates = [(label, choice)]
     errors = []
     for label, channel in candidates:
         try:
-            channel_options = {'channel': channel} if channel else {}
+            channel_options = ({'executable_path': executable} if executable else {'channel': channel} if channel else {})
             context = playwright.chromium.launch_persistent_context(profile_dir, **channel_options, **options)
         except Exception as exc:
             detail = ' '.join(str(exc).split())[:160]

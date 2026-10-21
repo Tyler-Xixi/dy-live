@@ -9,7 +9,6 @@ and recover by reload or by reopening the verified live-room product.
 
 from __future__ import annotations
 
-import email.utils
 import hashlib
 import json
 import math
@@ -32,10 +31,14 @@ from network_probe import NetworkProbe, ProbeCancelled
 from license_protocol import LicenseStatus
 from online_license import OnlineLicenseClient, LicenseTransport
 from license_config import LICENSE_ORIGIN, LICENSE_PUBLIC_KEYS
-from batch_queue import BatchOutcome, SequentialBatchQueue
-from batch_accounts import AccountStore, AccountStoreError
-from batch_accounts_ui import AccountManagerDialog
+from batch_queue import BatchOutcome
+from batch_accounts import AccountStore, AccountStoreError, AccountRecord
 from browser_settings import BROWSER_CHOICES, launch_browser as launch_persistent_browser
+from order_information import SELECTOR as INFORMATION_INPUT_SELECTOR, redacted_html
+from login_identity import nickname_from_response, user_label, user_id_from_response
+from saved_login_identity import load_identities, save_identity
+from login_cleanup import login_profiles, clear_profiles
+from window_position import center_window
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -60,7 +63,6 @@ REVEAL_PRICE_TEXT_RE = re.compile(r"^\s*查看价格\s*$")
 REAL_NAME_REQUIRED_RE = re.compile(
     r"(未实名|尚未实名|请先实名认证|请完成实名认证|实名认证后)"
 )
-RESERVATION_TEXT_RE = re.compile(r"(预约|提醒我|开售提醒|开抢提醒)")
 PAYMENT_TEXT_RE = re.compile(r"(付款|支付|立即支付|确认支付|输入密码|收银台|支付方式)")
 PAYMENT_SUBMIT_TEXT_RE = re.compile(
     r"(付款|支付|立即支付|确认支付|确认付款|提交支付|去支付)"
@@ -182,11 +184,10 @@ USER_AGREEMENT_TITLE_RE = re.compile(r"^\s*使用须知\s*$")
 
 
 DEFAULT_LIVE_URL = "https://live.douyin.com/712159628601"
-DEFAULT_PRODUCT_NAME = "【麦序】手作球解压玩具"
+DEFAULT_PRODUCT_NAME = ""
 
 
 def application_data_dir() -> Path:
-    """Return a writable data directory in source and packaged builds."""
     from mac_platform import application_data_dir as mac_data_dir
     return mac_data_dir()
 
@@ -209,7 +210,6 @@ NETWORK_LOG_BACKUPS = 3
 
 
 def machine_fingerprint() -> str:
-    """Create an app-specific hash without sending the raw Mac hardware UUID."""
     from mac_platform import machine_fingerprint as mac_fingerprint
     return mac_fingerprint()
 
@@ -347,6 +347,7 @@ class ActivationDialog(tk.Tk):
         ttk.Button(actions, text="退出", command=self.destroy).pack(side="right")
         self.activation_timers.add(self.after(150, self.verify_existing))
         self.activation_timers.add(self.after(80, self.poll_activation_result))
+        center_window(self)
 
     def change_activation_mode(self):
         self.activation_generation += 1
@@ -497,12 +498,12 @@ class AutomationConfig:
     product_id: str = "1"
     headless: bool = False
     browser_choice: str = "auto"
-    allow_reservation_click: bool = False
     open_panel_interval_ms: int = 180
     order_step_delay_ms: int = 300
     click_timeout_ms: int = 450
     multi_option_enabled: bool = False
     option_names: str = ""
+    order_information: str = ""
     submit_payment_and_abandon: bool = False
     save_diagnostics: bool = False
     max_retries: int = 5
@@ -511,7 +512,7 @@ class AutomationConfig:
     buy_quantity: int = 1
     buy_times: int = 1
     batch_interval_ms: int = 800
-    detail_refresh_ms: int = 10000
+    detail_refresh_ms: int = 1000
     profile_dir: str = field(
         default_factory=lambda: str(DEFAULT_PROFILE_DIR)
     )
@@ -719,6 +720,41 @@ class LoginSession:
         self.logout_event=threading.Event()
         self.on_logout=on_logout or (lambda:None)
         self.on_ready=on_ready or (lambda:None)
+        self.nickname = None
+        self.douyin_id = None
+        self.identity_since_ms = time.time()*1000
+
+    def capture_identity(self, request):
+        try:
+            parsed = urlparse(request.url)
+            if parsed.path not in ('/webcast/user/me/', '/aweme/v1/web/user/profile/self/'):
+                return
+            if request.timing.get('startTime', 0) < self.identity_since_ms:
+                return
+            response = request.response()
+            if response is None or response.status != 200:
+                return
+            length = response.headers.get('content-length')
+            if length and int(length) > 262144:
+                return
+            document=response.json()
+            nickname = nickname_from_response(response.url, document)
+            if nickname:
+                if self.nickname!=nickname: self.douyin_id=None
+                self.nickname = nickname
+                self.douyin_id=user_id_from_response(response.url,document) or self.douyin_id
+        except Exception:
+            pass  # Missing identity must not fail login or substitute a shop name.
+
+    @staticmethod
+    def can_auto_save(context, page):
+        try:
+            return (is_allowed_douyin_url(page.url)
+                    and has_authenticated_douyin_cookie(context.cookies())
+                    and not page.evaluate(MANUAL_VERIFICATION_JS)
+                    and page.get_by_text('登录', exact=True).filter(visible=True).count() == 0)
+        except Exception:
+            return False
 
     def run(self) -> str:
         from playwright.sync_api import sync_playwright
@@ -730,6 +766,7 @@ class LoginSession:
             context = launch_persistent_browser(
                 playwright, self.config.profile_dir, False, self.log, self.config.browser_choice
             )
+            context.on('requestfinished', self.capture_identity)
             if self.stop_event.is_set(): return 'cancelled'
             if self.reset_login:
                 clear_douyin_login(context)
@@ -742,21 +779,38 @@ class LoginSession:
                 timeout=60000,
             )
             self.log("info", "登录浏览器已打开，请在抖音官方页面完成扫码或验证码登录")
-            self.log("info", "确认页面已登录后，回到本程序点击“完成登录并保存”")
+            self.log("info", "登录成功后将自动确认并保存，账号昵称显示在软件底部；未确认时请检查登录或停止后重试")
             self.on_ready()
 
+            stable_login_at = None
+            last_login_check = 0.0
             while not self.finish_event.wait(0.2):
                 if self.stop_event.is_set():
                     return "cancelled"
                 if self.logout_event.is_set():
+                    stable_login_at = None
+                    self.nickname = None
+                    self.douyin_id = None
+                    self.identity_since_ms = time.time()*1000
                     clear_douyin_login(context)
                     self.on_logout()
                     page=context.new_page()
                     page.goto(self.config.live_url or 'https://www.douyin.com/',wait_until='domcontentloaded',timeout=60000)
                     self.logout_event.clear()
-                    self.log('info','已退出当前账号，请重新扫码登录，再点击“完成登录并保存”')
+                    self.log('info','已退出当前账号，请重新扫码登录，成功后自动保存')
                     self.on_ready()
                 try:
+                    now = time.monotonic()
+                    if now-last_login_check >= .5:
+                        last_login_check = now
+                        if self.can_auto_save(context, page):
+                            stable_login_at = stable_login_at if stable_login_at is not None else now
+                            if now-stable_login_at >= 2:
+                                self.log('info', '登录会话已连续确认，将自动保存并关闭登录浏览器；不会自动下单')
+                                self.finish_event.set()
+                                break
+                        else:
+                            stable_login_at = None
                     if not context.pages:
                         self.log("warn", "登录浏览器已被关闭，登录流程取消")
                         return "cancelled"
@@ -778,7 +832,7 @@ class LoginSession:
             self.log(
                 "warn",
                 "未检测到已登录账号。请确认网页右上角不再显示“登录”，"
-                "然后重新点击“完成登录并保存”",
+                "然后重新启动登录流程",
             )
             return "unverified"
         finally:
@@ -913,7 +967,7 @@ class AutomationRunner:
             target = '详情页已锁定 · 等待可提交按钮'
         state = '失败 · 页面异常：' + compact_text(error, 100) if error else '正常 · ' + target
         checked = self.monitor_last_success or '尚未确认'
-        prefix = '持续监控中（实时监控，仅日志每5秒刷新）'
+        prefix = '持续监控中（实时监控）'
         if self.state['manual_verification_waiting']:
             prefix = '监控暂停（等待人工验证，已暂停刷新和点击）'
             state = '等待人工验证 · 验证结束且目标详情恢复后继续'
@@ -979,11 +1033,9 @@ class AutomationRunner:
             self.page.set_default_timeout(2000)
             self.capture_network_evidence(self.page)
 
-            clock_offset_ms = 0
             if self.config.mode == "flash":
-                clock_offset_ms = self.calibrate_clock()
                 self.resolve_number_target(self.page)
-                self.run_flash_sale(self.page, clock_offset_ms)
+                self.run_flash_sale(self.page)
             else:
                 self.run_batch_buy(self.page)
             completed_normally = True
@@ -1047,31 +1099,6 @@ class AutomationRunner:
                 outcome = self.batch_outcome()
                 self._batch_outcome = BatchOutcome('failed', outcome.confirmed_orders, '浏览器释放未确认，停止账号交接；请核对订单并手动关闭仍在运行的浏览器')
                 self.log('warn', self._batch_outcome.reason)
-
-    def calibrate_clock(self) -> int:
-        started = time.time() * 1000
-        try:
-            response = self.context.request.get(
-                self.config.live_url, timeout=15000, max_redirects=2, fail_on_status_code=False
-            )
-            ended = time.time() * 1000
-            date_header = response.headers.get("date")
-            if not date_header:
-                self.log("warn", "服务器响应未包含 Date 头，本次使用本地时间")
-                return 0
-            server_dt = email.utils.parsedate_to_datetime(date_header)
-            server_ms = server_dt.timestamp() * 1000
-            midpoint_ms = (started + ended) / 2
-            offset = int(server_ms - midpoint_ms)
-            rtt = int(ended - started)
-            if abs(offset) > 50:
-                self.log("info", f"时间校准完成：offset={offset}ms, rtt={rtt}ms，按偏差补偿")
-            else:
-                self.log("info", f"时间校准完成：offset={offset}ms, rtt={rtt}ms")
-            return offset
-        except Exception as exc:
-            self.log("warn", f"时间校准失败，使用本地时间：{exc}")
-            return 0
 
     def capture_network_evidence(self, page) -> None:
         if not self.config.save_diagnostics:
@@ -1662,12 +1689,6 @@ class AutomationRunner:
                     raise GracefulStop(f'指定规格 {group}={name} 未唯一匹配，停止')
                 action, data = matches[0]
                 used.add(data['group']); chosen.append((action, data))
-            for group in groups:
-                if group in used: continue
-                defaults = [(action, data) for action, data in records if data['group'] == group and not data['unavailable'] and (data['clickable'] or data['selected'])]
-                if len(defaults) != 1 or not defaults[0][1]['selected'] or defaults[0][1]['unavailable']:
-                    raise GracefulStop(f'已填写规格，但规格组 {group} 未明确指定，停止')
-                chosen.append(defaults[0])
         else:
             for group in groups:
                 available = [(action, data) for action, data in records if data['group'] == group and not data['unavailable'] and (data['clickable'] or data['selected'])]
@@ -1701,6 +1722,25 @@ class AutomationRunner:
                 raise GracefulStop('规格选择结果无法确认，停止且未提交')
             self.assert_running(); self.wait_ms(25 if self.config.mode == 'flash' else 80)
         selected = [(data['group'], data['text']) for data in verified]
+        if requested and set(groups)-used:
+            # Read platform defaults after explicit choices and their SKU linkage.
+            # Never click an omitted group, even when it has other available choices.
+            current = scope.locator(PRODUCT_OPTION_SELECTOR).evaluate_all("""els => els.filter(el => {
+                const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden'&&
+                    (el.classList.contains('vZSOutR4')||el.getAttribute('aria-selected')==='true');
+            }).map(el=>({group:(el.closest('.YTFcT_zp')?.querySelector('.R_G6ohly')?.innerText||'').trim(),
+                text:(el.innerText||'').trim(),unavailable:!!el.closest('[aria-disabled="true"],[disabled],[inert]')||
+                    /disabled|soldout|unavailable/i.test(el.className)||/缺货|售罄|已抢完|已抢光/.test(el.innerText||'')}))""")
+            for group in groups:
+                defaults=[data for data in current if data['group']==group]
+                if len(defaults)!=1 or defaults[0]['unavailable'] or not defaults[0]['text']:
+                    raise GracefulStop(f'规格组 {group} 未确认唯一可用的选中项，请补充规格，未提交')
+                if group in used:
+                    if (group,defaults[0]['text']) not in selected:
+                        raise GracefulStop(f'指定规格组 {group} 的选中项变化，未提交')
+                else:
+                    selected.append((group,defaults[0]['text']))
+            selected.sort(key=lambda item:groups.index(item[0]))
         if selected != self.state.get('selected_options'):
             self.log('info', ('按填写内容选择' if requested else '自动选择首个可用规格')+'，已确认：'+' | '.join(group+'='+name for group,name in selected))
         self.state['selected_options'] = selected
@@ -1740,7 +1780,7 @@ class AutomationRunner:
             return
         try:
             base.parent.mkdir(parents=True, exist_ok=True)
-            root.screenshot(path=str(base)+'.png', timeout=5000)
+            root.screenshot(path=str(base)+'.png', timeout=5000, **({'mask':[root.locator(INFORMATION_INPUT_SELECTOR)]} if self.config.order_information else {}))
             Path(str(base)+'.json').write_text(json.dumps({'product_id':self.config.product_id, 'product_name':getattr(self,'batch_target_name',self.config.product_name), 'selected_options':selected, 'payment_text':payment_text, 'captured_at':stamp}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as exc:
             raise GracefulStop(f'可抢购详情规格快照保存失败，未提交：{exc}') from exc
@@ -1762,7 +1802,7 @@ class AutomationRunner:
         try:
             base.parent.mkdir(parents=True, exist_ok=True)
             Path(str(base)+'.json').write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding='utf-8')
-            page.screenshot(path=str(base)+'-after-submit.png', timeout=5000)
+            page.screenshot(path=str(base)+'-after-submit.png', timeout=5000, **({'mask':[page.locator(INFORMATION_INPUT_SELECTOR)]} if self.config.order_information else {}))
             self.log('info', f'提交前规格记录：{base}.json；提交尝试后截图：{base}-after-submit.png')
         except Exception as exc:
             # Failure to save diagnostics cannot reverse an order result.
@@ -1846,20 +1886,25 @@ class AutomationRunner:
     def numbered_cards(self, page):
         """Union of exact title and card badge matches; ambiguity always stops."""
         matches = []
-        for card in page.locator('li.sLOeOa5R').filter(visible=True).all():
-            title = card.locator('[data-e2e="promotion-title"]')
-            badge = card.locator('.hH83LEu1 > .s5ICtQCA')
-            if title.count() != 1:
+        cards = page.locator('li.sLOeOa5R').filter(visible=True)
+        records = cards.evaluate_all("""cards => cards.map((card,index) => {
+            const titles=card.querySelectorAll('[data-e2e="promotion-title"]');
+            const badges=card.querySelectorAll('.hH83LEu1 > .s5ICtQCA');
+            return {index,valid:titles.length===1,
+                    name:titles.length===1 ? titles[0].innerText.trim() : '',
+                    number:badges.length===1 ? badges[0].innerText.trim() : ''};
+        })""")
+        for record in records:
+            if not record['valid']:
                 continue
-            name = title.inner_text(timeout=300).strip()
-            number = badge.inner_text(timeout=300).strip() if badge.count() == 1 else ''
+            name, number = record['name'], record['number']
             if hasattr(self, 'resolved_product'):
                 expected_name, expected_number = self.resolved_product
                 match = normalize_text(name) == normalize_text(expected_name) and (not expected_number or number == expected_number)
             else:
                 match = (bool(self.config.product_name) and normalize_text(name) == normalize_text(self.config.product_name)) or (bool(self.config.product_id) and number == str(int(self.config.product_id)))
             if match:
-                matches.append(card)
+                matches.append(cards.nth(record['index']))
         if len(matches) > 1:
             raise GracefulStop('商品名称或编号对应多个商品，结果不明确，停止')
         return matches
@@ -2090,6 +2135,15 @@ class AutomationRunner:
     def scan_detail_lock_and_order(self, page) -> bool:
         return self.submit_flash_lock(page)
 
+    def ensure_order_information(self, root, *, verify_only=False):
+        from order_information import ensure_information, InformationError
+        try:
+            changed=ensure_information(root,self.config.order_information,verify_only=verify_only)
+        except InformationError as exc:
+            raise GracefulStop(str(exc)) from None
+        if changed:
+            self.log('info','下单填写信息已填入并核对（内容不写入日志）')
+
     def report_detail_submit_wait(self, page, reason):
         key = ('detail-submit-wait', reason)
         if self.state.get('detail_submit_wait_reason') != key:
@@ -2210,7 +2264,7 @@ class AutomationRunner:
         cached = self.state['options_verified'] and self.state.get('verified_specs_key') == cache_key
         if not cached and not self.select_product_options(page, required=True, scope=root, wait_for_availability=self.config.mode == 'flash'):
             self.state.pop('verified_specs_key', None)
-            if (self.config.mode == 'flash') and not self.detail_refresh_blocked and (list_became_ready or (time.monotonic()-self.detail_refreshed_at)*1000 >= max(1000, self.config.detail_refresh_ms)):
+            if (self.config.mode == 'flash') and not self.detail_refresh_blocked and (list_became_ready or (time.monotonic()-self.detail_refreshed_at)*1000 >= max(200, self.config.detail_refresh_ms)):
                 self.reopen_waiting_detail(page, data)
                 self.detail_refreshed_at = time.monotonic()
             else:
@@ -2230,6 +2284,9 @@ class AutomationRunner:
                 return False
             self.observe_detail_update(data, record=False)
             self.state['verified_specs_key'] = (data.get('index'), tuple(data.get('options', [])), data.get('specControlCount'), self.config.option_names)
+        if self.config.order_information:
+            self.ensure_order_information(root)
+            data = self.detail_snapshot(page)
         if data.get('matches') != 1 or data.get('manualVerification') or data.get('verification'):
             raise GracefulStop('选择规格后目标详情状态不明确，停止')
         if data['paymentCount'] > 1:
@@ -2292,6 +2349,8 @@ class AutomationRunner:
             self.log('info', f'阶段：编号 {self.config.product_id} 提交前核对完成，仅提交一次')
             self.record_submit_evidence(page,'number-before-submit')
             self.verify_selected_specs(root)
+            if self.config.order_information:
+                self.ensure_order_information(root,verify_only=True)
             final = action.evaluate(pinned_snapshot_js, pinned_snapshot_args)
             if not final.get('pinned') or final.get('submitSignature') != current.get('submitSignature') or final.get('manualVerification') or final.get('verification') or final.get('offline') or not PAYMENT_ACTION_TEXT_RE.fullmatch(compact_text((final.get('payment') or {}).get('text', ''), 160)):
                 before = json.loads(current.get('submitSignature') or '{}')
@@ -2317,7 +2376,7 @@ class AutomationRunner:
             self.reopen_waiting_detail(page, data)
             self.detail_refreshed_at = time.monotonic()
             return False
-        if ((self.config.mode == 'flash') and not self.detail_refresh_blocked and ((time.monotonic()-self.detail_refreshed_at)*1000 >= max(1000, self.config.detail_refresh_ms))):
+        if ((self.config.mode == 'flash') and not self.detail_refresh_blocked and ((time.monotonic()-self.detail_refreshed_at)*1000 >= max(200, self.config.detail_refresh_ms))):
             self.reopen_waiting_detail(page, data)
             self.detail_refreshed_at = time.monotonic()
         else:
@@ -2329,7 +2388,7 @@ class AutomationRunner:
         return self.submit_flash_lock(page)
 
     def save_diagnostics(self, page, reason: str) -> None:
-        if self.config.mode == 'flash' and reason in ('number-detail-confirmed', 'detail-submit-wait'):
+        if self.config.mode == 'flash' and reason in ('number-matched', 'number-detail-confirmed', 'detail-submit-wait'):
             self.state.setdefault('waiting_evidence', {})[reason] = {
                 'observed_at': datetime.now(AUTOMATION_TIMEZONE).isoformat(),
                 'detail_status': dict(self.state.get('detail_status', {})),
@@ -2348,15 +2407,15 @@ class AutomationRunner:
             stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%f")
             safe_reason = re.sub(r"[^\w-]+", "_", reason or "snapshot")[:40]
             base = Path(self.config.diagnostics_dir) / f"{stamp}_{safe_reason}"
-            page.screenshot(path=str(base) + ".png", full_page=True, timeout=5000)
-            Path(str(base) + ".html").write_text(page.content(), encoding="utf-8")
+            page.screenshot(path=str(base) + ".png", full_page=True, timeout=5000, **({'mask':[page.locator(INFORMATION_INPUT_SELECTOR)]} if self.config.order_information else {}))
+            Path(str(base) + ".html").write_text(redacted_html(page) if self.config.order_information else page.content(), encoding="utf-8")
             Path(str(base) + ".json").write_text(
                 json.dumps(
                     {
                         "reason": reason,
                         "url": page.url,
                         "state": self.state,
-                        "config": asdict(self.config),
+                        "config": {key:value for key,value in asdict(self.config).items() if key!='order_information'},
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -2367,15 +2426,11 @@ class AutomationRunner:
         except Exception as exc:
             self.log("warn", f"保存诊断快照失败：{exc}")
 
-    def run_flash_sale(self, page, clock_offset_ms: int) -> None:
+    def run_flash_sale(self, page) -> None:
         self.log("info", f"打开直播间：{self.config.live_url}")
         self.mark_phase('link_opened')
         if not hasattr(self, "resolved_product"):
             page.goto(self.config.live_url, wait_until="domcontentloaded", timeout=60000)
-        try:
-            page.wait_for_timeout(1200)
-        except Exception:
-            pass
         cookies = self.context.cookies() if self.context else []
         body_text = ""
         try:
@@ -2388,7 +2443,7 @@ class AutomationRunner:
             self.save_diagnostics(page, "login-required")
             raise RuntimeError(
                 "当前浏览器资料目录没有有效的抖音登录态。"
-                "请停止任务，点击“登录抖音”，完成登录后再点击“完成登录并保存”。"
+                "请停止任务，点击“登录抖音”，等待软件自动确认并保存登录。"
             )
         if has_authenticated_douyin_cookie(cookies):
             self.log("info", "已确认抖音登录态")
@@ -2481,6 +2536,8 @@ class AutomationRunner:
                 if not self.select_product_options(page, required=True, scope=root):
                     raise GracefulStop('指定规格未核对成功，停止')
                 self.set_purchase_quantity(page, scope=root)
+                if self.config.order_information:
+                    self.ensure_order_information(root)
                 data = self.batch_detail_snapshot(page)
                 payment = data.get('payment')
                 if (data.get('matches') != 1 or data.get('quantity') != self.config.buy_quantity or
@@ -2490,6 +2547,8 @@ class AutomationRunner:
                 self.capture_ready_specs(page, root, payment['text'])
                 self.batch_pending_order_snapshot(page, capture_existing=True)
                 action = self.prepare_batch_submit(page, data)
+                if self.config.order_information:
+                    self.ensure_order_information(root,verify_only=True)
                 self.state['batch_verified_submission'] = {'quantity':self.config.buy_quantity, 'product_name':self.batch_target_name, 'selected_options':list(self.state.get('selected_options', [])), 'click_confirmed':False}
                 self.assert_running()
                 self.state['pending_payment_review'] = True
@@ -2803,8 +2862,8 @@ class App(tk.Tk):
         self.title("DY直播间自助工具")
         from mac_platform import set_window_icon
         set_window_icon(self, Path(__file__).resolve().parent / 'assets')
-        self.geometry(f"{min(1180,self.winfo_screenwidth()-80)}x{min(860,self.winfo_screenheight()-100)}")
-        self.minsize(980, 640)
+        self.geometry("1180x860")
+        self.minsize(980, 720)
         self.log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self.ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self.stop_event = threading.Event()
@@ -2825,20 +2884,23 @@ class App(tk.Tk):
         self.license_controller = license_controller
         self.account_store = AccountStore(APP_DATA_DIR)
         self.account_store_error = ''
-        self.account_manager = None
-        self.batch_queue = None
+        self.adding_account_id = None
         self.login_account_id = None
         self.login_in_progress = False
         from mac_update_ui import UpdateController
-        self.updater = UpdateController(self)
+        self.updater = UpdateController(self, APP_DATA_DIR)
         try:
             self.accounts = self.account_store.load()
         except AccountStoreError as exc:
             self.accounts = ()
             self.account_store_error = str(exc)
-            self.log('warn', self.account_store_error + '；多账号功能不可用，原单账号不受影响')
+            self.log('warn', self.account_store_error + '；账号切换不可用，原单账号不受影响')
         self.build_ui()
         self.restore_preferences()
+        identity=self.vars['active_account_id'].get()
+        if identity!='legacy':
+            name=next((a.name for a in self.accounts if a.account_id==identity),'账号已移除，请切换')
+            self.login_user_text.set('用户：已选择 · '+name)
         from announcement_ui import AnnouncementController
         self.announcements = AnnouncementController(self, APP_DATA_DIR)
         self.after(1000, self.announcements.check_startup)
@@ -2860,7 +2922,7 @@ class App(tk.Tk):
         return (APP_DATA_DIR,DEFAULT_PROFILE_DIR,resolve_profile_directory(self.vars['profile_dir'].get()))
 
     def set_update_busy(self,busy):
-        for name in ('start_button','login_button','logout_button','browser_button','network_start_button','account_manager_button','update_button'):
+        for name in ('start_button','login_button','switch_account_button','clear_login_button','browser_button','network_start_button','update_button'):
             button=getattr(self,name,None)
             if button:
                 button.configure(state='disabled' if busy or self.closing or self.network_busy() or
@@ -2883,7 +2945,7 @@ class App(tk.Tk):
                     if isinstance(value,bool):
                         var.set(value)
                 elif isinstance(value,str):
-                    var.set(str(as_int(value,10000,1000)) if name=='detail_refresh_ms' else value)
+                    var.set(str(as_int(value,1000,200)) if name=='detail_refresh_ms' else value)
             if self.vars['browser_choice'].get() not in BROWSER_CHOICES.values():
                 self.vars['browser_choice'].set('auto')
         except (OSError,ValueError,tk.TclError):
@@ -2925,20 +2987,21 @@ class App(tk.Tk):
 
     def add_field(self, parent, row: int, label: str, name: str, default: str, width: int = 48) -> None:
         hints = {
-            "live_url": "粘贴直播间地址，例如 https://live.douyin.com/…",
+            "live_url": "粘贴直播间地址，例如https://live.douyin.com/712878527164",
             "product_name": "请复制完整的商品名称；名称或编号至少填写一项。",
-            "product_id": "填写“全部商品”卡片左上角的数字，不是规格编号。",
-            "batch_live_url": "填写直播间链接，从全部商品定位目标。",
-            "batch_product_id": "直播间商品卡片左上角编号；名称或编号任一匹配且结果唯一即可。",
+            "product_id": "填写“全部商品”卡片左上角的数字，如果没有编号就填商品名称",
+            "batch_live_url": "粘贴直播间地址，例如https://live.douyin.com/712878527164",
+            "batch_product_id": "填写“全部商品”卡片左上角的数字，如果没有编号就填商品名称",
             "batch_product_name": "请复制完整的商品名称；名称和编号至少填写一项，任一匹配且结果唯一即可。",
             "buy_times": "需要创建多少笔订单，例如 3 表示连续下 3 单。",
             "buy_quantity": "每笔订单购买几件，与订单数是两个不同的设置。",
             "batch_interval_ms": "两单之间的等待时间；800 毫秒 = 0.8 秒。",
             "click_timeout_ms": "等待单次点击完成的最长时间，默认 450 毫秒。",
             "open_panel_interval_ms": "尝试打开商品列表的最短间隔，默认 180 毫秒。",
-            "detail_refresh_ms": "等待支付按钮时定期重新打开或刷新目标详情。默认10000毫秒（10秒），最低1000毫秒（1秒）；页面变化会立即检测，服务异常或验证时暂停刷新。确认待付款后停止。",
+            "detail_refresh_ms": "等待支付按钮时定期重新打开或刷新目标详情。影响商品状态更新及时性的重要参数。推荐1000毫秒，最低200毫秒；越短不一定越快，频繁重开可能增加加载开销或异常。监听页面变化，不保证抢购成功。",
             "profile_dir": "保存登录状态的浏览器资料目录；通常无需修改。两个模块共用。",
-            "option_names": "用中文分号；分隔规格组；填写即生效，空白时自动选择首个可用项。旧 | 格式仍兼容。",
+            "option_names": "用中文分号；分隔规格组。只填写部分组时，其余组保留平台已选的可用默认项；全部留空时自动选择首个可用项。旧 | 格式仍兼容。",
+            "order_information": "选填商品要求的账号或手机号；留空沿用原流程。仅在目标支付区的唯一可填写信息框中填入，不填写数量框。",
         }
         ttk.Label(parent, text=label).grid(row=row*2, column=0, sticky="w", padx=(0,12), pady=(10,2))
         var = tk.StringVar(value=default)
@@ -3067,7 +3130,7 @@ class App(tk.Tk):
         self.update_button=ttk.Button(updates,text='检查更新',style='Primary.TButton',command=lambda:self.updater.check(manual=True))
         self.update_button.pack(side='left')
         from announcement_ui import show_announcements
-        ttk.Button(updates,text='导出更新诊断',style='Quiet.TButton',command=self.updater.export_diagnostics).pack(side='left',padx=6)
+        ttk.Button(updates,text='导出更新诊断',style='Primary.TButton',command=self.updater.export_diagnostics).pack(side='left',padx=6)
         self.announcement_button=ttk.Button(updates,text='公告',style='Primary.TButton',command=lambda:self.announcements.open_history())
         self.announcement_button.pack(side='left',padx=6)
         from feedback_ui import show_feedback
@@ -3097,23 +3160,16 @@ class App(tk.Tk):
         detail_hint.bind("<Configure>",lambda event:detail_hint.configure(wraplength=max(140,event.width)))
         ttk.Label(form,text="启动后会真实提交订单；确认待付款后，请自行完成付款。",
                   style="Hint.TLabel",wraplength=450).grid(row=7,column=0,columnspan=2,sticky="w",pady=(0,4))
-        self.add_field(batch,0,"直播间链接","batch_live_url","",32)
+        self.add_field(batch,0,"直播间链接","batch_live_url",DEFAULT_LIVE_URL,32)
         self.add_field(batch,1,"商品名称","batch_product_name","",32)
-        self.add_field(batch,2,"商品编号","batch_product_id","",16)
+        self.add_field(batch,2,"商品编号","batch_product_id","1",16)
         self.add_field(batch,3,"订单数（笔）","buy_times","1",16)
         self.add_field(batch,4,"每单数量（件）","buy_quantity","1",16)
         self.add_field(batch,5,"两单间隔（毫秒）","batch_interval_ms","800",16)
-        accounts = ttk.LabelFrame(batch,text='多账号 · 按顺序执行',padding=12)
-        accounts.grid(row=12,column=0,columnspan=2,sticky='ew',pady=(14,0))
-        accounts.columnconfigure(0,weight=1)
-        self.add_check(accounts,0,0,'启用多账号依次下单','batch_multi_account',False)
-        self.account_manager_button = ttk.Button(accounts,text='管理账号',style='Quiet.TButton',command=self.open_account_manager)
-        self.account_manager_button.grid(row=0,column=1,sticky='e',padx=(8,0))
-        account_hint = ttk.Label(accounts,text='默认关闭。管理账号 → 登录并保存 → 设置数量和顺序。\n开启后按各账号设置执行；异常停止整队，先核对订单。',style='Hint.TLabel',wraplength=450)
-        account_hint.grid(row=1,column=0,columnspan=2,sticky='ew',pady=(6,0))
-        accounts.bind('<Configure>',lambda event: account_hint.configure(wraplength=max(140,event.width-28)))
-        ttk.Label(batch,text="每笔确认待付款即锁单成功；订单数是独立订单笔数，每单数量是每笔购买件数。",
-                  style="Hint.TLabel",wraplength=450).grid(row=13,column=0,columnspan=2,sticky="w",pady=(10,0))
+        batch_hint=ttk.Label(batch,text="每笔确认待付款即锁单成功；订单数是独立订单笔数，每单数量是每笔购买件数。",
+                             style="Hint.TLabel",wraplength=450)
+        batch_hint.grid(row=12,column=0,columnspan=2,sticky="ew",pady=(14,0))
+        batch_hint.bind('<Configure>',lambda event:batch_hint.configure(wraplength=max(140,event.width)))
 
         rules = ttk.LabelFrame(panel,text="商品规格 · 两个模块共享",padding=14)
         rules.grid(row=1,column=0,columnspan=2,sticky="ew",pady=(10,0))
@@ -3126,8 +3182,9 @@ class App(tk.Tk):
         names = ttk.Frame(sku)
         names.grid(row=1,column=0,columnspan=2,sticky="ew")
         names.columnconfigure(1,weight=1)
-        self.add_field(names,0,"选项名称","option_names","",28)
+        self.add_field(names,0,"规格选项名称","option_names","",28)
         self.option_entry = next(w for w in names.winfo_children() if isinstance(w,ttk.Entry))
+        self.add_field(names,1,"下单填写信息","order_information","",28)
         examples = ttk.Frame(sku)
         examples.grid(row=2,column=0,columnspan=2,sticky='ew',pady=(8,0))
         examples.columnconfigure(0,weight=1)
@@ -3155,13 +3212,13 @@ class App(tk.Tk):
         advanced = ttk.Frame(self.side_tabs)
         network = ttk.Frame(self.side_tabs)
         self.side_tabs.add(logs,text="运行日志")
-        self.side_tabs.add(guide,text="使用指南")
-        self.side_tabs.add(advanced,text="高级设置")
         self.side_tabs.add(network,text="网络检测")
+        self.side_tabs.add(advanced,text="高级设置")
+        self.side_tabs.add(guide,text="使用指南")
         self.build_network_panel(network)
         logs.columnconfigure(0,weight=1)
         logs.rowconfigure(1,weight=1)
-        ttk.Label(logs,text="实时监控 · 仅日志每 5 秒刷新",style="Section.TLabel").grid(row=0,column=0,sticky="w",pady=(0,12))
+        ttk.Label(logs,text="实时监控",style="Section.TLabel").grid(row=0,column=0,sticky="w",pady=(0,12))
         self.log_text = tk.Text(logs,wrap="word",height=20,width=36,font=("PingFang SC",9),
                                 background="#ffffff",foreground="#334155",relief="flat",padx=14,pady=14,spacing1=3,spacing3=5,insertbackground='#386fca',selectbackground='#dbeafe')
         self.log_text.grid(row=1,column=0,sticky="nsew")
@@ -3199,7 +3256,7 @@ class App(tk.Tk):
         for row,(label,name,default) in enumerate([
             ("点击超时（毫秒）","click_timeout_ms","450"),
             ("面板间隔（毫秒）","open_panel_interval_ms","180"),
-            ("详情刷新间隔（毫秒，最低1000）","detail_refresh_ms","10000"),
+            ("详情刷新间隔（毫秒，最低200，推荐1000）","detail_refresh_ms","1000"),
             ("登录资料目录","profile_dir",str(DEFAULT_PROFILE_DIR)),
         ]):
             self.add_field(adv,row,label,name,default,18)
@@ -3207,19 +3264,32 @@ class App(tk.Tk):
         switches.grid(row=14,column=0,columnspan=2,sticky="ew",pady=(16,0))
         self.add_check(switches,0,0,"不显示浏览器窗口（无头模式）","headless",False)
         self.add_check(switches,1,0,"任务成功后关闭浏览器","close_browser_on_finish",False)
-        self.add_check(switches,2,0,"允许点击预约 / 开售提醒","allow_reservation_click",False)
-        self.add_check(switches,3,0,"保存截图和页面，便于排查问题","save_diagnostics",False)
+        self.add_check(switches,2,0,"保存截图和页面，便于排查问题","save_diagnostics",False)
 
         footer = ttk.Frame(root)
         footer.grid(row=2,column=0,columnspan=2,sticky="ew",pady=(18,0))
-        self.login_button = ttk.Button(footer,text="1. 登录抖音",command=self.start_login)
-        self.login_button.pack(side="left")
-        self.finish_login_button = ttk.Button(footer,text="完成登录并保存",command=self.finish_login,state="disabled")
-        self.finish_login_button.pack(side="left",padx=8)
-        self.logout_button=ttk.Button(footer,text='退出当前账号',command=self.logout_current_account)
-        self.logout_button.pack(side='left')
-        self.vars['browser_choice'] = tk.StringVar(value='auto')
-        self.browser_button = ttk.Button(footer,text='选择浏览器',command=self.open_browser_choice)
+        self.login_button = ttk.Button(footer,text="登录抖音",command=self.start_login,width=8)
+        self.login_user_text = tk.StringVar(value='用户：待确认')
+        account_card = ttk.Frame(footer,padding=(6,0))
+        account_card.pack(side='left',padx=(6,10))
+        self.login_button.pack(side='left',padx=(0,8))
+        self.login_account_status = tk.Label(account_card,text='● 待确认',background='#f4f6fa',foreground='#64748b',font=('PingFang SC',8))
+        self.login_account_status.pack(anchor='w',pady=(0,1))
+        self.login_display_name = tk.StringVar()
+        style = ttk.Style(self)
+        style.configure('AccountName.TLabel',background='#f4f6fa',foreground='#183153',font=('PingFang SC',10))
+        self.login_user_label = ttk.Label(account_card,textvariable=self.login_display_name,width=14,style='AccountName.TLabel')
+        self.login_user_label.pack(anchor='w')
+        self.login_user_text.trace_add('write',lambda *_:self.refresh_account_card())
+        self.refresh_account_card()
+        self.vars['profile_dir'].trace_add('write',lambda *_:self.login_user_text.set('用户：待确认'))
+        self.vars['active_account_id']=tk.StringVar(value='legacy')
+        self.switch_account_button=ttk.Button(footer,text='切换账号',command=self.open_account_switch,width=8)
+        self.switch_account_button.pack(side='left',padx=(8,0))
+        self.clear_login_button=ttk.Button(footer,text='清空全部登录资料',command=self.clear_all_login_data,width=16)
+        self.clear_login_button.pack(side='left',padx=(8,0))
+        self.vars['browser_choice'] = tk.StringVar(value='system')
+        self.browser_button = ttk.Button(footer,text='选择浏览器',command=self.open_browser_choice,width=8)
         self.browser_button.pack(side='left',padx=(8,0))
         self.start_button = ttk.Button(footer,text="开始秒杀监控",style="Primary.TButton",command=self.start_task)
         self.start_button.pack(side="right")
@@ -3252,7 +3322,7 @@ class App(tk.Tk):
 
     def build_network_panel(self, parent) -> None:
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(3, weight=1)
+        parent.rowconfigure(4, weight=1)
         ttk.Label(parent, text='网络检测', style='Section.TLabel').grid(row=0,column=0,sticky='w',padx=16,pady=(16,8))
         ttk.Label(parent, text='检测站点响应、波动和下载吞吐。建议在开售前检测；测速期间暂停启动任务。',
                   style='Hint.TLabel',wraplength=300).grid(row=1,column=0,sticky='ew',padx=16,pady=(0,12))
@@ -3262,12 +3332,12 @@ class App(tk.Tk):
         self.network_start_button.pack(side='left')
         self.network_stop_button = ttk.Button(actions,text='停止检测',command=self.stop_network_test,state='disabled')
         self.network_stop_button.pack(side='left',padx=8)
-        self.network_result = tk.Text(parent,wrap='word',height=18,width=32,font=('PingFang SC',9),
+        self.network_result = tk.Text(parent,wrap='word',height=8,width=32,font=('PingFang SC',9),
                                       background='#ffffff',foreground='#334155',relief='flat',padx=14,pady=14,spacing3=6)
-        self.network_result.grid(row=3,column=0,sticky='nsew',padx=16,pady=12)
+        self.network_result.grid(row=4,column=0,sticky='nsew',padx=16,pady=12)
         bar = SmoothScrollbar(parent,command=self.network_result.yview,
                               on_interact=lambda: self.cancel_scroll(self.network_result))
-        bar.grid(row=3,column=1,sticky='ns',pady=12)
+        bar.grid(row=4,column=1,sticky='ns',pady=12)
         self.network_result.configure(yscrollcommand=bar.set)
         def wheel(event):
             self.smooth_panel_scroll(self.network_result,event.delta)
@@ -3277,20 +3347,40 @@ class App(tk.Tk):
         self.network_result.insert('1.0','点击“开始检测”，获取当前网络参考结果。\n\n下载检测最多使用约 8 MiB 流量。抖音站点每轮 6 个样本，失败率是请求失败比例，不是丢包率。\n\n检测使用直连 HTTPS；浏览器代理线路可能不同。网速不能单独推算抢购成功率。')
         self.network_result.configure(state='disabled')
         self.network_status = tk.StringVar(value='尚未检测')
-        ttk.Label(parent,textvariable=self.network_status,style='Hint.TLabel',wraplength=300).grid(row=4,column=0,sticky='ew',padx=16)
-        self.network_progress = ttk.Progressbar(parent,mode='indeterminate')
-        self.network_progress.grid(row=5,column=0,sticky='ew',padx=16,pady=(8,16))
+        ttk.Label(parent,textvariable=self.network_status,style='Hint.TLabel',wraplength=300).grid(row=5,column=0,sticky='ew',padx=16)
+        cards = ttk.Frame(parent)
+        cards.grid(row=3,column=0,sticky='ew',padx=16,pady=(0,12))
+        self.network_site_summary = tk.StringVar(value='— ms   状况：尚未检测')
+        self.network_general_summary = tk.StringVar(value='— ms   状况：尚未检测')
+        for title, value in [('直播站点响应延迟', self.network_site_summary), ('通用网络响应延迟', self.network_general_summary)]:
+            card = ttk.LabelFrame(cards,text=title,padding=10)
+            card.pack(fill='x',pady=4)
+            ttk.Label(card,textvariable=value,style='Section.TLabel').pack(anchor='w')
+        self.network_progress = ttk.Progressbar(parent,mode='determinate',maximum=100)
+        self.network_progress.grid(row=6,column=0,sticky='ew',padx=16,pady=(8,16))
+
+    def show_network_sample(self, label, sample):
+        if label == 'download':
+            self.network_progress['value'] = 80+19*sample['bytes']/max(1,sample['maximum'])
+            return
+        from network_probe import assess_network
+        variable = self.network_site_summary if label == '抖音直播站点' else self.network_general_summary
+        value = sample['median_ms']
+        status = assess_network(sample)['level']
+        variable.set(('不可用' if value is None else f'{value:.0f} ms') + '   状况：' + status)
+        offset = 0 if label == '抖音直播站点' else 40
+        self.network_progress['value'] = offset+40*sample['samples']/6
 
     def network_busy(self) -> bool:
         return bool(self.network_thread and self.network_thread.is_alive())
 
     def start_network_test(self) -> None:
         if self.updater.busy():
-            messagebox.showwarning('更新进行中','请先完成或取消更新。'); return
+            messagebox.showwarning('更新进行中','请先完成或取消更新。',parent=self); return
         if self.closing or self.network_busy():
             return
         if self.worker and self.worker.is_alive():
-            messagebox.showwarning('任务运行中','请先停止监控或登录任务，避免测速占用抢购网络。')
+            messagebox.showwarning('任务运行中','请先停止监控或登录任务，避免测速占用抢购网络。',parent=self)
             return
         self.network_start_button.configure(state='disabled')
         self.network_stop_button.configure(state='normal')
@@ -3298,10 +3388,12 @@ class App(tk.Tk):
         self.login_button.configure(state='disabled')
         self.browser_button.configure(state='disabled')
         self.network_status.set('正在检测…')
-        self.network_progress.start(12)
+        self.network_progress['value'] = 0
         def progress(text):
             self.ui_queue.put(lambda text=text: self.network_status.set(text) if not self.closing else None)
-        self.network_probe = NetworkProbe(progress)
+        def sample(label, result):
+            self.ui_queue.put(lambda label=label, result=result: self.show_network_sample(label,result) if not self.closing else None)
+        self.network_probe = NetworkProbe(progress,on_sample=sample)
         self.network_thread = threading.Thread(target=self.network_test_worker,daemon=True)
         self.network_thread.start()
 
@@ -3362,6 +3454,7 @@ class App(tk.Tk):
         self.network_result.delete('1.0','end')
         self.network_result.insert('1.0','\n'.join(lines))
         self.network_result.configure(state='disabled')
+        self.network_progress['value'] = 100
         self.network_status.set(f"检测完成 · {result.get('elapsed_s',0):g} 秒")
 
     def config_from_form(self) -> AutomationConfig:
@@ -3378,14 +3471,14 @@ class App(tk.Tk):
             product_id=str(get("batch_product_id" if batch else "product_id")).strip(),
             click_timeout_ms=as_int(get("click_timeout_ms"), 450, 100),
             open_panel_interval_ms=as_int(get("open_panel_interval_ms"), 180, 50),
-            detail_refresh_ms=as_int(get('detail_refresh_ms'), 10000, 1000),
-            profile_dir=str(resolve_profile_directory(get("profile_dir"))),
+            detail_refresh_ms=as_int(get('detail_refresh_ms'), 1000, 200),
+            profile_dir=str(self.selected_account_profile()),
             headless=bool(get("headless")),
             browser_choice=str(get("browser_choice")),
             close_browser_on_finish=bool(get("close_browser_on_finish")),
             option_names=str(get("option_names")).strip(),
+            order_information=str(get("order_information")).strip(),
             submit_payment_and_abandon=False,
-            allow_reservation_click=bool(get("allow_reservation_click")),
             save_diagnostics=bool(get("save_diagnostics")),
         )
 
@@ -3448,9 +3541,9 @@ class App(tk.Tk):
         self.login_in_progress=False
         self.start_button.configure(state="normal")
         self.login_button.configure(state="normal")
-        self.logout_button.configure(state='disabled' if self.updater.busy() else 'normal')
         self.browser_button.configure(state='disabled' if self.updater.busy() else 'normal')
-        self.finish_login_button.configure(state="disabled")
+        self.clear_login_button.configure(state='disabled' if self.updater.busy() else 'normal')
+        self.switch_account_button.configure(state='disabled' if self.updater.busy() else 'normal')
         self.stop_button.configure(state="disabled")
         self.network_start_button.configure(state='normal')
         self.set_account_busy(False)
@@ -3460,11 +3553,9 @@ class App(tk.Tk):
 
     def set_account_busy(self, busy):
         if busy:
-            self.logout_button.configure(state='disabled')
             self.browser_button.configure(state='disabled')
-        self.account_manager_button.configure(state='disabled' if busy or self.account_store_error else 'normal')
-        if self.account_manager and self.account_manager.winfo_exists():
-            self.account_manager.set_busy(busy)
+            self.clear_login_button.configure(state='disabled')
+            self.switch_account_button.configure(state='disabled')
 
     def save_accounts(self, accounts):
         if self.account_store_error:
@@ -3474,25 +3565,6 @@ class App(tk.Tk):
         self.account_store.save(tuple(accounts))
         self.accounts = tuple(accounts)
 
-    def open_account_manager(self):
-        if self.account_busy():
-            messagebox.showwarning('任务运行中','请先结束当前任务或登录'); return
-        if self.account_store_error:
-            messagebox.showerror('账号文件不可用',self.account_store_error); return
-        if self.account_manager and self.account_manager.winfo_exists():
-            self.account_manager.lift(); return
-        self.account_manager = AccountManagerDialog(self,self.accounts,self.save_accounts,self.start_account_login,self.account_busy)
-
-    def prepare_batch_jobs(self, config):
-        if config.mode != 'batch' or not self.vars['batch_multi_account'].get():
-            return ()
-        if self.account_store_error:
-            raise AccountStoreError(self.account_store_error)
-        jobs = self.account_store.jobs(self.accounts,Path(config.profile_dir))
-        if not jobs:
-            raise AccountStoreError('请在“管理账号”中勾选至少一个账号并保存修改')
-        return jobs
-
     def finish_account_login(self, account_id, status, *, session=None):
         if session is not None and self.login_session is not session: return
         if status != 'saved': return
@@ -3501,72 +3573,75 @@ class App(tk.Tk):
             self.after(50, lambda: self.finish_account_login(account_id, status,session=session))
             return
         try:
-            values=tuple(replace(a,login_saved=True) if a.account_id==account_id else a for a in self.accounts)
+            values=tuple(replace(a,login_saved=True,name=session.nickname[:60] if session and session.nickname else a.name) if a.account_id==account_id else a for a in self.accounts)
+            if account_id=='legacy' and not any(a.account_id=='legacy' for a in values):
+                values+=(AccountRecord('legacy','原有账号',False,1,1,True),)
             self.save_accounts(values)
-            if self.account_manager and self.account_manager.winfo_exists():
-                self.account_manager.accounts=values
-                self.account_manager.refresh(account_id)
+            if session is not None:
+                save_identity(APP_DATA_DIR,account_id,session.nickname,session.douyin_id)
+            if self.adding_account_id==account_id:
+                self.adding_account_id=None
+                self.after_idle(self.open_account_switch)
         except (ValueError,OSError) as exc:
-            self.log('error','登录资料已保存，但账号标记保存失败：'+str(exc))
+            self.log('error','登录资料已保存，但账号信息保存失败：'+str(exc))
 
-    def start_account_login(self, account_id):
+    def add_login_account(self):
         if self.account_busy():
-            messagebox.showwarning('任务运行中','请先结束当前任务或登录'); return
+            messagebox.showwarning('暂不能新增','请先结束当前任务、登录、测速或更新。',parent=self); return
         if self.account_store_error:
-            messagebox.showerror('账号文件不可用',self.account_store_error); return
+            messagebox.showerror('账号文件不可用',self.account_store_error,parent=self); return
         try:
             config=self.config_from_form()
-            accounts=tuple(replace(a,selected=True) for a in self.accounts)
-            jobs=self.account_store.jobs(accounts,Path(config.profile_dir))
-            job=next(j for j in jobs if j.account_id==account_id)
-            if not is_allowed_douyin_url(config.live_url): raise ValueError('直播间链接必须是 https://*.douyin.com 地址')
-            self.launch_login(replace(config,profile_dir=job.profile_dir),account_id)
-        except (ValueError,StopIteration) as exc:
-            messagebox.showerror('账号登录失败',str(exc) or '账号记录不存在')
+            candidates=(config.live_url,self.vars['live_url'].get(),self.vars['batch_live_url'].get(),'https://live.douyin.com/')
+            live_url=next(url for url in candidates if is_allowed_douyin_url(url))
+            account=self.account_store.new_account('新账号')
+            job=self.account_store.jobs((replace(account,selected=True),),resolve_profile_directory(self.vars['profile_dir'].get()))[0]
+            self.save_accounts(self.accounts+(account,))
+            self.vars['active_account_id'].set(account.account_id)
+            self.adding_account_id=account.account_id
+            self.launch_login(replace(config,live_url=live_url,profile_dir=job.profile_dir),account.account_id)
+        except (ValueError,OSError) as exc:
+            messagebox.showerror('新增账号失败',str(exc),parent=self)
 
     def start_task(self) -> None:
         if self.updater.busy() or self.closing:
-            messagebox.showwarning('更新进行中','请先完成或取消更新。'); return
+            messagebox.showwarning('更新进行中','请先完成或取消更新。',parent=self); return
         if self.license_controller:
             status = self.license_controller.snapshot()
             if not status.allowed:
-                messagebox.showwarning("授权不可用", license_status_text(status))
+                messagebox.showwarning("授权不可用", license_status_text(status),parent=self)
                 self.license_controller.start_background(lambda result: self.ui_queue.put(lambda: self.on_license_change(result)))
                 return
         if self.network_busy():
-            messagebox.showwarning('网络检测中','请先停止网络检测，再启动任务。')
+            messagebox.showwarning('网络检测中','请先停止网络检测，再启动任务。',parent=self)
             return
         if self.worker and self.worker.is_alive():
-            messagebox.showwarning("任务运行中", "已有任务正在运行")
+            messagebox.showwarning("任务运行中", "已有任务正在运行",parent=self)
             return
-        config = self.config_from_form()
         try:
-            jobs = self.prepare_batch_jobs(config)
+            config = self.config_from_form()
+            active_identity=self.vars['active_account_id'].get()
         except AccountStoreError as exc:
-            messagebox.showerror('多账号配置错误',str(exc)); return
-        if config.mode == "batch" and not jobs:
+            messagebox.showerror('账号配置错误',str(exc),parent=self); return
+        if config.mode == "batch":
             for field_name, label in (("buy_times", "订单数"), ("buy_quantity", "每单商品数量")):
                 raw = str(self.vars[field_name].get()).strip()
                 if not raw.isdigit() or int(raw) < 1:
-                    messagebox.showerror("配置错误", f"{label}必须是正整数")
+                    messagebox.showerror("配置错误", f"{label}必须是正整数",parent=self)
                     return
         if not is_allowed_douyin_url(config.live_url):
-            messagebox.showerror("配置错误", "请填写有效的 https://*.douyin.com 直播间或商品链接")
+            messagebox.showerror("配置错误", "请填写有效的 https://*.douyin.com 直播间或商品链接",parent=self)
             return
         if not config.product_name and not config.product_id:
-            messagebox.showerror('配置错误', '商品名称和商品编号至少填写一个'); return
+            messagebox.showerror('配置错误', '商品名称和商品编号至少填写一个',parent=self); return
         if config.product_id and (not config.product_id.isdigit() or int(config.product_id) < 1):
-            messagebox.showerror('配置错误', '商品编号必须为正整数'); return
+            messagebox.showerror('配置错误', '商品编号必须为正整数',parent=self); return
         if config.option_names.strip():
             try:
                 parse_product_options(config.option_names)
             except ValueError as exc:
-                messagebox.showerror("配置错误", str(exc))
+                messagebox.showerror("配置错误", str(exc),parent=self)
                 return
-        if jobs:
-            summary='\n'.join(f'{i+1}. {j.name} · {j.account_id[:8]}：{j.buy_times} 单，每单 {j.buy_quantity} 件' for i,j in enumerate(jobs))
-            summary += '\n\n'+('真实下单 · '+'每笔待付款即完成，后续支付由用户处理')
-            if not messagebox.askyesno('确认账号执行顺序',summary+'\n异常停止整队，先核对订单再决定是否重跑。继续？'): return
         warning = "即将启用真实下单操作，脚本会点击购买和提交订单按钮。"
         lock_mode=effective_flash_lock_mode(config)
         if lock_mode != 'none':
@@ -3575,31 +3650,15 @@ class App(tk.Tk):
                         '\n程序会点击一次“支付”提交，确认新待付款订单后停止，不继续付款。'
                         '\n按钮是否会直接扣款取决于平台和账号设置，程序不能保证只锁库存。')
         warning += "\n\n请确认商品、规格、数量、收货地址和账号均正确。是否继续？"
-        if not messagebox.askyesno("确认真实下单", warning, icon="warning"):
+        if not messagebox.askyesno("确认真实下单", warning, icon="warning",parent=self):
             return
         # Confirmation dialogs run a nested Tk loop: recheck ownership before
         # creating any ordering state, even when the entry check was idle.
-        if self.update_blocked():
-            messagebox.showwarning('暂不能启动','任务状态已变化，请结束当前操作后重试。'); return
+        if self.update_blocked() or self.vars['active_account_id'].get()!=active_identity:
+            messagebox.showwarning('暂不能启动','任务状态已变化，请结束当前操作后重试。',parent=self); return
         self.stop_event = threading.Event()
-        self.batch_queue = None
-        if jobs:
-            base_config = replace(config)
-            stop_event = self.stop_event
-            license_status = self.license_controller.snapshot if self.license_controller else None
-            def factory(job):
-                prefix=f'[{job.name} {jobs.index(job)+1}/{len(jobs)}] '
-                account_config=replace(base_config,profile_dir=job.profile_dir,buy_times=job.buy_times,buy_quantity=job.buy_quantity,
-                    diagnostics_dir=str(Path(base_config.diagnostics_dir)/'batch-accounts'/job.account_id),
-                    network_log_path=str(Path(base_config.network_log_path).parent/'batch-accounts'/job.account_id/'network.jsonl'))
-                self.runner=AutomationRunner(account_config,lambda level,msg:self.log(level,prefix+msg),stop_event,license_status=license_status,queue_lifecycle=True)
-                return self.runner
-            self.batch_queue = SequentialBatchQueue(factory,self.log,stop_event,license_status)
-            self.batch_jobs = jobs
-            self.runner = None
-        else:
-            self.runner = AutomationRunner(config, self.log, self.stop_event,
-                license_status=self.license_controller.snapshot if self.license_controller else None)
+        self.runner = AutomationRunner(config, self.log, self.stop_event,
+            license_status=self.license_controller.snapshot if self.license_controller else None)
         if self.license_controller:
             self.license_controller.start_background(lambda result: self.ui_queue.put(lambda: self.on_license_change(result)))
         self.save_preferences()
@@ -3613,11 +3672,8 @@ class App(tk.Tk):
 
     def worker_main(self) -> None:
         try:
-            if self.batch_queue:
-                self.queue_report = self.batch_queue.run(self.batch_jobs)
-            else:
-                status = self.runner.run() if self.runner else "stopped"
-                self.log("info", f"任务结束：{status}")
+            status = self.runner.run() if self.runner else "stopped"
+            self.log("info", f"任务结束：{status}")
         except Exception:
             self.log("error", "任务异常退出")
         finally:
@@ -3625,10 +3681,11 @@ class App(tk.Tk):
 
     def set_browser_choice(self, choice):
         if self.update_blocked():
-            messagebox.showwarning('暂不能切换浏览器', '请先结束任务、登录、网络检测或更新。')
+            messagebox.showwarning('暂不能切换浏览器', '请先结束任务、登录、网络检测或更新。',parent=self)
             return False
         if choice not in BROWSER_CHOICES.values():
-            raise ValueError('请选择自动选择、Microsoft Edge 或 Google Chrome')
+            raise ValueError('请选择列表中受支持的浏览器')
+        self.login_user_text.set('用户：待确认')
         self.vars['browser_choice'].set(choice)
         self.save_preferences()
         label = next(label for label, value in BROWSER_CHOICES.items() if value == choice)
@@ -3637,7 +3694,7 @@ class App(tk.Tk):
 
     def open_browser_choice(self):
         if self.update_blocked():
-            messagebox.showwarning('暂不能切换浏览器', '请先结束任务、登录、网络检测或更新。')
+            messagebox.showwarning('暂不能切换浏览器', '请先结束任务、登录、网络检测或更新。',parent=self)
             return
         dialog = tk.Toplevel(self)
         dialog.title('选择软件使用的浏览器')
@@ -3648,31 +3705,36 @@ class App(tk.Tk):
         label = next(label for label, value in BROWSER_CHOICES.items() if value == self.vars['browser_choice'].get())
         selected = tk.StringVar(value=label)
         ttk.Combobox(body, textvariable=selected, values=tuple(BROWSER_CHOICES), state='readonly', width=28).pack(fill='x', pady=12)
-        ttk.Label(body, text='自动选择：优先 Edge，再尝试 Chrome。\n明确选择后，启动失败会提示，不自动换浏览器。\n首次切换可能需要重新登录；原登录资料保留。\n此设置不会修改 Windows 默认浏览器。',
+        ttk.Label(body, text='跟随系统默认：检测Windows默认浏览器，不支持时提示手动选择。\n其他已检测浏览器仍需本机验证兼容性。\n明确选择后，启动失败会提示，不自动换浏览器。\n首次切换可能需要重新登录；原登录资料保留。\n此设置不会修改 Windows 默认浏览器。',
                   style='Hint.TLabel', wraplength=360).pack(anchor='w')
         def save():
             if self.set_browser_choice(BROWSER_CHOICES[selected.get()]):
                 dialog.destroy()
         ttk.Button(body, text='保存选择', style='Primary.TButton', command=save).pack(anchor='e', pady=(16,0))
+        center_window(dialog,self)
 
     def start_login(self) -> None:
         if self.network_busy():
-            messagebox.showwarning('网络检测中','请先停止网络检测，再登录。')
+            messagebox.showwarning('网络检测中','请先停止网络检测，再登录。',parent=self)
             return
         if self.worker and self.worker.is_alive():
-            messagebox.showwarning("任务运行中", "请先停止当前任务")
+            messagebox.showwarning("任务运行中", "请先停止当前任务",parent=self)
             return
-        config = self.config_from_form()
+        try:
+            config = self.config_from_form()
+        except AccountStoreError as exc:
+            messagebox.showerror("账号不可用",str(exc),parent=self); return
         if not is_allowed_douyin_url(config.live_url):
-            messagebox.showerror("配置错误", "直播间链接必须是 https://*.douyin.com 地址")
+            messagebox.showerror("配置错误", "直播间链接必须是 https://*.douyin.com 地址",parent=self)
             return
-        self.launch_login(config)
+        self.launch_login(config,self.vars['active_account_id'].get())
 
     def launch_login(self, config, account_id=None, *, reset_login=False):
         if self.updater.busy() or self.closing:
-            messagebox.showwarning('更新进行中','请先完成或取消更新。'); return
+            messagebox.showwarning('更新进行中','请先完成或取消更新。',parent=self); return
         self.login_account_id = account_id
         self.login_in_progress=True
+        self.login_user_text.set('用户：登录中')
         self.stop_event = threading.Event()
         self.login_finish_event = threading.Event()
         session = LoginSession(
@@ -3684,8 +3746,6 @@ class App(tk.Tk):
         self.worker = threading.Thread(target=self.login_worker_main, daemon=True)
         self.start_button.configure(state="disabled")
         self.login_button.configure(state="disabled")
-        self.finish_login_button.configure(state="disabled")
-        self.logout_button.configure(state='disabled')
         self.stop_button.configure(state="normal")
         self.network_start_button.configure(state='disabled')
         self.set_account_busy(True)
@@ -3693,52 +3753,162 @@ class App(tk.Tk):
 
     def login_ready(self, session):
         if self.login_session is not session or self.closing or not self.login_in_progress or self.login_finish_event.is_set() or self.stop_event.is_set(): return
-        self.finish_login_button.configure(state='normal')
-        self.logout_button.configure(state='normal')
 
     def mark_account_logged_out(self, account_id):
         if self.closing: return
+        self.login_user_text.set('用户：未登录')
         if self.account_store_error:
             self.log('warn','账号文件不可用，保留原文件；已清除的本地登录状态不受影响。'); return
         identity=account_id or 'legacy'
         values=tuple(replace(a,login_saved=False) if a.account_id==identity else a for a in self.accounts)
         try:
             self.account_store.save(values); self.accounts=values
-            if self.account_manager and self.account_manager.winfo_exists():
-                self.account_manager.accounts=values; self.account_manager.refresh(identity)
         except (ValueError,OSError) as exc:
             self.log('warn','已清除抖音登录状态，但账号记录未更新：'+str(exc))
 
-    def logout_current_account(self):
-        def blocked():
-            return (self.closing or self.updater.busy() or self.network_busy() or
-                    bool(self.worker and self.worker.is_alive() and not self.login_in_progress))
-        if blocked():
-            messagebox.showwarning('暂不能退出','请先结束监控、下单、测速或更新。'); return
-        session=self.login_session
-        active=bool(self.worker and self.worker.is_alive() and self.login_in_progress)
-        account_id=self.login_account_id if session else None
-        if active and (self.login_finish_event.is_set() or self.stop_event.is_set() or session.logout_event.is_set()):
-            messagebox.showwarning('登录处理中','请等待当前登录操作结束。'); return
-        if account_id and not any(a.account_id==account_id for a in self.accounts):
-            messagebox.showwarning('账号记录已变化','请重新选择账号并打开登录浏览器。'); return
-        config=replace(session.config, browser_choice=self.vars['browser_choice'].get()) if session and account_id else self.config_from_form()
-        if active: config=replace(session.config)
-        if not is_allowed_douyin_url(config.live_url):
-            messagebox.showerror('配置错误','直播间链接必须是 https://*.douyin.com 地址'); return
-        name=next((a.name for a in self.accounts if a.account_id==(account_id or 'legacy')),'默认账号')
-        if not messagebox.askyesno('退出当前账号',f'退出「{name}」在本软件中的抖音登录状态并重新登录？\n资料目录：{config.profile_dir}\n其他账号、商品设置和软件激活不会删除。'): return
-        if blocked() or self.login_session is not session or bool(self.worker and self.worker.is_alive())!=active:
-            messagebox.showwarning('状态已变化','请等待当前操作结束后重试。'); return
-        if active:
-            if self.login_finish_event.is_set() or self.stop_event.is_set() or session.logout_event.is_set(): return
-            self.finish_login_button.configure(state='disabled'); self.logout_button.configure(state='disabled')
-            session.logout_event.set()
-        else: self.launch_login(config,account_id,reset_login=True)
+    def clear_all_login_data(self):
+        if self.account_busy():
+            messagebox.showwarning('暂不能清理','请先结束监控、登录、下单、测速或更新。',parent=self); return
+        if self.account_store_error:
+            messagebox.showerror('账号资料不可用','请先处理账号文件错误，避免遗漏账号资料。',parent=self); return
+        try:
+            accounts=self.account_store.load()
+            roots=[DEFAULT_PROFILE_DIR,resolve_profile_directory(self.vars['profile_dir'].get())]
+            jobs=self.account_store.jobs(tuple(replace(a,selected=True) for a in accounts),roots[-1])
+            roots.extend(job.profile_dir for job in jobs)
+            batch_root=APP_DATA_DIR/'batch-account-profiles'
+            if batch_root.is_dir():
+                roots.extend(p for p in batch_root.iterdir() if re.fullmatch(r'[0-9a-f]{32}',p.name))
+            if self.login_session: roots.append(self.login_session.config.profile_dir)
+            profiles=login_profiles(roots)
+        except (ValueError,OSError) as exc:
+            messagebox.showerror('无法清理',str(exc),parent=self); return
+        if not messagebox.askyesno('清空全部登录资料',
+                '将清除本软件所有账号及浏览器中的抖音登录状态，需要重新登录。\n'
+                '保留卡密、商品设置、账号备注及订单诊断。\n\n资料目录：\n'+
+                ('\n'.join(str(p) for p in profiles) or '未发现已保存的浏览器资料')+'\n\n确定清空？',parent=self): return
+        if self.account_busy():
+            messagebox.showwarning('状态已变化','请等待当前操作结束后重试。',parent=self); return
+        self.stop_event=threading.Event()
+        self.set_account_busy(True)
+        for button in (self.start_button,self.login_button,self.network_start_button):
+            button.configure(state='disabled')
+        self.stop_button.configure(state='normal')
+        self.worker=threading.Thread(target=self.clear_login_worker,args=(profiles,accounts),daemon=True)
+        self.worker.start()
+
+    def clear_login_worker(self, profiles, accounts):
+        try:
+            if profiles:
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as playwright:
+                    clear_profiles(playwright,profiles,clear_douyin_login,self.log,self.stop_event)
+            self.account_store.save(tuple(replace(a,login_saved=False) for a in accounts))
+            self.ui_queue.put(self.login_data_cleared)
+            self.log('info','全部抖音登录资料已清空，请重新登录。')
+        except Exception as exc:
+            self.log('error','登录资料清理未完成，可能仅清除了部分账号：'+str(exc))
+            self.ui_queue.put(lambda:self.login_user_text.set('用户：待确认'))
+        finally:
+            self.ui_queue.put(self.reset_controls)
+
+    def login_data_cleared(self):
+        if self.closing: return
+        self.accounts=self.account_store.load()
+        self.login_session=None
+        self.login_account_id=None
+        self.login_user_text.set('用户：未登录')
+
+    def selected_account_profile(self, account_id=None):
+        identity=account_id or self.vars['active_account_id'].get()
+        base=resolve_profile_directory(self.vars['profile_dir'].get())
+        if identity=='legacy': return base
+        if self.account_store_error: raise AccountStoreError(self.account_store_error)
+        record=next((a for a in self.accounts if a.account_id==identity),None)
+        if record is None: raise AccountStoreError('当前所选账号已移除，请重新选择账号；不会切换到其他账号下单。')
+        return Path(self.account_store.jobs((replace(record,selected=True),),base)[0].profile_dir)
+
+    def select_saved_account(self, account_id):
+        if self.account_busy():
+            messagebox.showwarning('暂不能切换','请先停止任务、登录、测速或更新。',parent=self); return False
+        try:
+            self.selected_account_profile(account_id)
+        except (ValueError,OSError) as exc:
+            messagebox.showerror('切换失败',str(exc),parent=self); return False
+        name=next((a.name for a in self.accounts if a.account_id==account_id),'原有账号')
+        try:
+            name=load_identities(APP_DATA_DIR).get(account_id,{}).get('nickname') or name
+        except (ValueError,OSError): pass
+        self.vars['active_account_id'].set(account_id)
+        self.login_session=None
+        self.login_account_id=None
+        self.login_user_text.set('用户：已选择 · '+name)
+        self.log('info',f'已选择账号：{name}；使用当前浏览器中已有登录资料，不会清除或重新登录。登录过期时请点击登录抖音。')
+        return True
+
+    def saved_account_rows(self):
+        identities=load_identities(APP_DATA_DIR)
+        return [(a.account_id,identities.get(a.account_id,{}).get('nickname') or '用户名未识别',
+                 identities.get(a.account_id,{}).get('douyin_id') or 'ID未识别')
+                for a in self.accounts if a.login_saved]
+
+    def open_account_switch(self):
+        if self.account_busy():
+            messagebox.showwarning('暂不能切换','请先停止任务、登录、测速或更新。',parent=self); return
+        if self.account_store_error:
+            messagebox.showerror('账号文件不可用',self.account_store_error,parent=self); return
+        try:
+            records=self.saved_account_rows()
+        except (ValueError,OSError) as exc:
+            messagebox.showerror('账号显示资料不可用',str(exc),parent=self); return
+        dialog=tk.Toplevel(self); dialog.title('切换已保存账号'); dialog.geometry('600x430'); dialog.minsize(540,390); dialog.transient(self)
+        style=ttk.Style(self)
+        rowheight=max(36,int(self.tk.call('font','metrics',('PingFang SC',10),'-linespace'))+18)
+        style.configure('Account.Treeview',background='#ffffff',fieldbackground='#ffffff',foreground='#263449',
+                        rowheight=rowheight,borderwidth=0,font=('PingFang SC',10))
+        style.configure('Account.Treeview.Heading',background='#edf1f6',foreground='#65758b',
+                        font=('PingFang SC',9,'bold'),padding=(12,10),borderwidth=0)
+        style.map('Account.Treeview',background=[('selected','#e8f0ff')],foreground=[('selected','#245fd6')])
+        style.map('Account.Treeview.Heading',background=[('active','#edf1f6')])
+        style.configure('Account.Card.TFrame',background='#ffffff',borderwidth=1,relief='solid',bordercolor='#dbe2ea')
+        body=ttk.Frame(dialog,padding=24); body.pack(fill='both',expand=True)
+        body.columnconfigure(0,weight=1); body.rowconfigure(2,weight=1)
+        heading=ttk.Frame(body); heading.grid(row=0,column=0,sticky='ew')
+        ttk.Label(heading,text='选择登录账号',font=('PingFang SC',14,'bold'),foreground='#183153').pack(side='left')
+        ttk.Label(heading,text=f'已保存 {len(records)} 个账号',style='Hint.TLabel').pack(side='right',anchor='s',pady=(0,3))
+        ttk.Label(body,text='使用已有登录资料，切换时无需重新扫码。',style='Hint.TLabel').grid(row=1,column=0,sticky='w',pady=(6,16))
+        card=ttk.Frame(body,style='Account.Card.TFrame',padding=1); card.grid(row=2,column=0,sticky='nsew')
+        tree=ttk.Treeview(card,columns=('name','douyin_id'),show='headings',selectmode='browse',height=6,style='Account.Treeview')
+        bar=SmoothScrollbar(card,command=tree.yview); bar.configure(background='#ffffff'); bar.pack(side='right',fill='y')
+        tree.configure(yscrollcommand=bar.set)
+        tree.heading('name',text='用户名',anchor='w'); tree.heading('douyin_id',text='抖音 ID',anchor='w')
+        tree.column('name',width=260,minwidth=180,anchor='w'); tree.column('douyin_id',width=220,minwidth=160,anchor='w')
+        tree.pack(fill='both',expand=True)
+        tree.tag_configure('even',background='#f8fafc')
+        for index,(ident,name,douyin_id) in enumerate(records):
+            tree.insert('','end',iid=ident,values=(name,douyin_id),tags=('even',) if index%2 else ())
+        if not records:
+            ttk.Label(body,text='暂无已保存账号，点击“新增账号”完成登录。',style='Hint.TLabel').grid(row=3,column=0,sticky='w',pady=(10,0))
+        current=self.vars['active_account_id'].get()
+        if tree.exists(current): tree.selection_set(current)
+        def use():
+            selection=tree.selection()
+            if selection and self.select_saved_account(selection[0]): dialog.destroy()
+        actions=ttk.Frame(body); actions.grid(row=4,column=0,sticky='ew',pady=(18,0))
+        ttk.Button(actions,text='新增账号',command=lambda:(dialog.destroy(),self.add_login_account())).pack(side='left')
+        use_button=ttk.Button(actions,text='使用此账号',style='Primary.TButton',command=use,
+                              state='normal' if tree.selection() else 'disabled')
+        use_button.pack(side='right')
+        tree.bind('<<TreeviewSelect>>',lambda _:use_button.configure(state='normal' if tree.selection() else 'disabled'))
+        note=ttk.Label(body,text='资料按浏览器分别保存，登录过期时请重新登录。\n未识别的用户名或 ID，可在登录成功后尝试补齐。',style='Hint.TLabel',wraplength=540)
+        note.grid(row=5,column=0,sticky='ew',pady=(14,0))
+        note.bind('<Configure>',lambda event:note.configure(wraplength=max(140,event.width)))
+        center_window(dialog,self)
 
     def login_worker_main(self) -> None:
         account_id = self.login_account_id
         session=self.login_session
+        status = "unverified"
         try:
             status = session.run() if session else "cancelled"
             self.log("info", f"登录流程结束：{status}")
@@ -3747,18 +3917,30 @@ class App(tk.Tk):
         except Exception:
             self.log("error", "登录流程异常：\n" + traceback.format_exc())
         finally:
+            self.ui_queue.put(lambda:self.show_login_user(session,status))
             self.ui_queue.put(lambda:self.finish_login_controls(session))
 
     def finish_login_controls(self, session):
         if self.login_session is session:
             self.reset_controls()
 
-    def finish_login(self) -> None:
-        if self.login_session and self.login_session.logout_event.is_set(): return
-        self.login_finish_event.set()
-        self.finish_login_button.configure(state="disabled")
-        self.logout_button.configure(state='disabled')
-        self.log("info", "正在保存登录态并关闭登录浏览器")
+    def show_login_user(self, session, status):
+        if self.closing or self.login_session is not session:
+            return
+        self.login_user_text.set(user_label(session.nickname) if status == 'saved' else '用户：登录未确认')
+
+    def refresh_account_card(self):
+        value = self.login_user_text.get().removeprefix('用户：')
+        states = {
+            '待确认': ('待确认', '请登录确认账号', '#64748b'),
+            '登录中': ('登录中', '请在浏览器完成登录', '#2563eb'),
+            '未登录': ('未登录', '点击左侧登录抖音', '#64748b'),
+            '登录未确认': ('尚未确认', '请检查登录或验证', '#b45309'),
+            '昵称未识别': ('登录已保存', '昵称暂未识别', '#15803d'),
+        }
+        status, name, color = (('已选择账号',value.removeprefix('已选择 · '),'#2563eb') if value.startswith('已选择 · ') else states.get(value, ('登录已保存', value, '#15803d')))
+        self.login_account_status.configure(text='● '+status,foreground=color)
+        self.login_display_name.set(name)
 
     def stop_task(self) -> None:
         self.stop_event.set()
@@ -3792,8 +3974,6 @@ class App(tk.Tk):
             self.login_finish_event.set()
             self.start_button.configure(state="disabled")
             self.login_button.configure(state="disabled")
-            self.finish_login_button.configure(state="disabled")
-            self.logout_button.configure(state='disabled')
             self.stop_button.configure(state="disabled")
             self.log("warn", "正在安全停止任务并关闭浏览器……")
             self.after(100, self.wait_for_worker_before_close)
@@ -3808,8 +3988,6 @@ class App(tk.Tk):
 
 
 def main() -> None:
-    if sys.platform != 'darwin':
-        raise RuntimeError('此独立版本只能在macOS运行，请使用Windows正式版')
     online = OnlineLicenseClient(APP_DATA_DIR, machine_fingerprint(), LICENSE_PUBLIC_KEYS, LicenseTransport(LICENSE_ORIGIN))
     activation = ActivationDialog(LocalLicenseClient(), online)
     activation.mainloop()
